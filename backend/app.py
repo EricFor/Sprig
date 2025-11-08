@@ -76,26 +76,6 @@ def preprocess_image(image_pil):
     
     return preprocessed_pil, noisy_image
 
-@app.route('/', methods=['GET'])
-def index():
-    """Root endpoint with API information"""
-    return jsonify({
-        "message": "EcoFridge API",
-        "version": "1.0.0",
-        "endpoints": {
-            "/health": {
-                "method": "GET",
-                "description": "Health check endpoint"
-            },
-            "/api/analyze-fridge": {
-                "method": "POST",
-                "description": "Analyze fridge image and generate recipes",
-                "required": ["image (file)"],
-                "optional": ["preferences (JSON)"]
-            }
-        }
-    }), 200
-
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""

@@ -1,94 +1,589 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from inference_sdk import InferenceHTTPClient
 import base64
 import io
-from PIL import Image
 import os
-import google.generativeai as genai
 import json
-import requests
-from typing import Optional, Any
+import time
+import logging
+from typing import List, Dict, Optional, Any, Tuple
+from PIL import Image
 import cv2
 import numpy as np
-import random
+from openai import OpenAI
+import re
+from inflect import engine
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
-# Initialize Roboflow client
-CLIENT = InferenceHTTPClient(
-    api_url="https://serverless.roboflow.com",
-    api_key=os.getenv("ROBOFLOW_API_KEY", "PMXJsunsSTtzwaHuRPQX")
-)
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-MODEL_ID = "refrigerator-food/3"
+# Initialize OpenAI client
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY environment variable is required")
 
-# Initialize Gemini AI
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyAJL3YKnXY5wzfyguhG3GV3z9ZbezDNVNo")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "google/gemini-2.5-flash")
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Extract model name from "google/gemini-2.5-flash" format to "gemini-2.5-flash"
-GEMINI_MODEL_NAME = GEMINI_MODEL.replace("google/", "") if "/" in GEMINI_MODEL else GEMINI_MODEL
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL_NAME}:generateContent"
+# Model configuration
+PRIMARY_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+FALLBACK_MODEL = os.getenv("OPENAI_MODEL_FALLBACK", "gpt-4o-mini")
+USE_FALLBACK = os.getenv("USE_FALLBACK_MODEL", "false").lower() == "true"
 
-# Also configure the SDK as fallback
-genai.configure(api_key=GEMINI_API_KEY)
+# Default confidence threshold
+DEFAULT_MIN_CONFIDENCE = 0.90
+DEFAULT_TOP_K = None  # No limit by default
 
-def preprocess_image(image_pil):
+# Initialize inflect engine for singularization
+inflect_engine = engine()
+
+# Alias mapping for ingredient normalization
+INGREDIENT_ALIASES = {
+    "scallion": "green onion",
+    "green onion": "green onion",
+    "spring onion": "green onion",
+    "scallions": "green onion",
+    "green onions": "green onion",
+    "bell pepper": "bell pepper",
+    "bell peppers": "bell pepper",
+    "sweet pepper": "bell pepper",
+    "red pepper": "bell pepper",
+    "yellow pepper": "bell pepper",
+    "tomato": "tomato",
+    "tomatoes": "tomato",
+    "cherry tomato": "tomato",
+    "cherry tomatoes": "tomato",
+    "carrot": "carrot",
+    "carrots": "carrot",
+    "lettuce": "lettuce",
+    "leaf lettuce": "lettuce",
+    "iceberg lettuce": "lettuce",
+    "onion": "onion",
+    "onions": "onion",
+    "yellow onion": "onion",
+    "white onion": "onion",
+    "red onion": "onion",
+    "egg": "egg",
+    "eggs": "egg",
+    "chicken": "chicken",
+    "chicken breast": "chicken",
+    "chicken thigh": "chicken",
+    "beef": "beef",
+    "ground beef": "beef",
+    "milk": "milk",
+    "whole milk": "milk",
+    "skim milk": "milk",
+    "cheese": "cheese",
+    "cheddar cheese": "cheese",
+    "mozzarella": "cheese",
+    "mozzarella cheese": "cheese",
+    "butter": "butter",
+    "yogurt": "yogurt",
+    "greek yogurt": "yogurt",
+    "bread": "bread",
+    "white bread": "bread",
+    "whole wheat bread": "bread",
+}
+
+# Deny list for non-ingredient items
+NON_INGREDIENT_DENY_LIST = {
+    "container", "bag", "package", "packaging", "box", "bottle", "jar", "can",
+    "utensil", "fork", "knife", "spoon", "plate", "bowl", "cup", "glass",
+    "food", "stuff", "thing", "item", "object", "product", "label", "text",
+    "shelf", "drawer", "door", "handle", "refrigerator", "fridge", "light",
+    "plastic", "metal", "paper", "cardboard", "foil", "wrap", "lid", "cap",
+}
+
+# Adjectives to remove (quantity/quality descriptors)
+QUANTITY_ADJECTIVES = {
+    "large", "small", "big", "tiny", "huge", "medium", "big", "little",
+    "fresh", "old", "new", "expired", "rotten", "spoiled", "good", "bad",
+    "full", "empty", "half", "whole", "partial", "leftover", "remaining",
+    "some", "many", "few", "several", "multiple", "various", "different",
+    "red", "green", "yellow", "orange", "blue", "purple", "white", "black",
+    "raw", "cooked", "frozen", "thawed", "warm", "cold", "hot", "cool",
+}
+
+def validate_image_quality(image_pil: Image.Image) -> Tuple[bool, Optional[str]]:
     """
-    Preprocess image to match dataset style with noise and cutouts
-    Similar to the sample image with heavy noise and black rectangular occlusions
+    Validate image quality before processing.
+    Returns (is_valid, error_message)
     """
-    # Convert PIL to OpenCV format
-    image_cv = cv2.cvtColor(np.array(image_pil), cv2.COLOR_RGB2BGR)
-    h, w = image_cv.shape[:2]
+    # Check resolution
+    width, height = image_pil.size
+    min_dimension = 320
+    if width < min_dimension or height < min_dimension:
+        return False, f"Image resolution too low ({width}x{height}). Please use at least {min_dimension}x{min_dimension} pixels."
     
-    # Add heavy noise (similar to sample image)
-    noise_intensity = 0.15
-    noise = np.random.normal(0, noise_intensity * 255, image_cv.shape).astype(np.float32)
-    noisy_image = image_cv.astype(np.float32) + noise
-    noisy_image = np.clip(noisy_image, 0, 255).astype(np.uint8)
+    # Check brightness
+    img_array = np.array(image_pil.convert('L'))
+    mean_brightness = np.mean(img_array)
     
-    # Add black rectangular cutouts (occlusions)
-    # 10x smaller by area means ~3.16x smaller dimensions (sqrt(10) ≈ 3.16)
-    num_cutouts = random.randint(8, 15)  # Random number of cutouts
-    cutout_size_range = (13, 38)  # Size range for cutouts (10x smaller area: 126/3.16 to 379/3.16)
+    if mean_brightness < 30:
+        return False, "Image too dark. Please ensure good lighting when taking the photo."
+    if mean_brightness > 225:
+        return False, "Image too bright. Please reduce glare or adjust lighting."
     
-    for _ in range(num_cutouts):
-        # Random position
-        x = random.randint(0, w - cutout_size_range[1])
-        y = random.randint(0, h - cutout_size_range[1])
+    # Check blur (Laplacian variance)
+    gray = cv2.cvtColor(np.array(image_pil), cv2.COLOR_RGB2GRAY)
+    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+    
+    if laplacian_var < 100:
+        return False, "Image too blurry. Please take a clearer photo with better focus."
+    
+    return True, None
+
+def optimize_image_size(image_pil: Image.Image, max_dimension: int = 1024) -> Image.Image:
+    """
+    Resize image to optimal size for inference while maintaining aspect ratio.
+    """
+    width, height = image_pil.size
+    max_size = max(width, height)
+    
+    if max_size > max_dimension:
+        # Maintain aspect ratio
+        if width > height:
+            new_width = max_dimension
+            new_height = int(height * (max_dimension / width))
+        else:
+            new_height = max_dimension
+            new_width = int(width * (max_dimension / height))
         
-        # Random size within range
-        cutout_w = random.randint(cutout_size_range[0], cutout_size_range[1])
-        cutout_h = random.randint(cutout_size_range[0], cutout_size_range[1])
-        
-        # Ensure cutout doesn't go out of bounds
-        x = min(x, w - cutout_w)
-        y = min(y, h - cutout_h)
-        
-        # Draw black rectangle (cutout)
-        noisy_image[y:y+cutout_h, x:x+cutout_w] = 0
+        return image_pil.resize((new_width, new_height), Image.LANCZOS)
     
-    # Convert back to PIL
-    preprocessed_pil = Image.fromarray(cv2.cvtColor(noisy_image, cv2.COLOR_BGR2RGB))
+    return image_pil
+
+def image_to_base64(image_pil: Image.Image, format: str = "JPEG") -> str:
+    """
+    Convert PIL Image to base64 string for API.
+    """
+    buffer = io.BytesIO()
+    image_pil.save(buffer, format=format)
+    image_bytes = buffer.getvalue()
+    return base64.b64encode(image_bytes).decode('utf-8')
+
+def classify_image_with_openai(image_base64: str, model: str = PRIMARY_MODEL) -> Dict[str, Any]:
+    """
+    Classify fridge image using OpenAI Vision API.
+    """
+    system_message = """You are an expert at identifying food ingredients in refrigerator images.
+
+Your task is to identify ONLY actual food ingredients, not containers, packaging, or utensils.
+
+Rules:
+1. Return ONLY a valid JSON object with this exact structure:
+   {
+     "ingredients": [
+       {"name": "ingredient_name", "confidence": 0.95}
+     ],
+     "notes": "optional brief context"
+   }
+
+2. Exclude:
+   - Brand names (e.g., "Coca-Cola", "Heinz")
+   - Containers, bags, packaging, utensils
+   - Vague labels like "food", "stuff", "things"
+   - Any item you are less than 90% confident about
+
+3. Only include ingredients you can clearly identify with high confidence (≥0.90).
+
+4. Use common ingredient names (e.g., "tomato" not "ripe red tomato", "chicken" not "organic chicken breast").
+
+5. Return ingredients as singular nouns when possible (e.g., "egg" not "eggs", "tomato" not "tomatoes").
+
+6. Do not include confidence scores below 0.90.
+
+7. Return ONLY valid JSON, no markdown, no code blocks, no explanations outside the JSON structure."""
+
+    user_message = """Analyze this refrigerator image and identify all visible food ingredients.
+
+Return ONLY a JSON object with the structure specified in the system message.
+Include only ingredients you can identify with high confidence (≥0.90)."""
+
+    try:
+        # Note: response_format may not be supported for vision models in all cases
+        # We'll try with it first, and parse JSON from text if needed
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": user_message},
+                        {"type": "image_url", "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_base64}",
+                            "detail": "high"
+                        }}
+                    ]}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,  # Low temperature for consistent outputs
+                max_tokens=1000
+            )
+        except Exception as format_error:
+            # If response_format fails, try without it and parse JSON from text
+            logger.warning(f"Response format not supported, trying without it: {format_error}")
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": user_message},
+                        {"type": "image_url", "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_base64}",
+                            "detail": "high"
+                        }}
+                    ]}
+                ],
+                temperature=0.1,
+                max_tokens=1000
+            )
+        
+        content = response.choices[0].message.content
+        
+        # Remove markdown code blocks if present
+        if content.startswith("```json"):
+            content = content[7:]
+        elif content.startswith("```"):
+            content = content[3:]
+        if content.endswith("```"):
+            content = content[:-3]
+        content = content.strip()
+        
+        result = json.loads(content)
+        
+        # Log token usage
+        if hasattr(response, 'usage'):
+            logger.info(f"Tokens used - Prompt: {response.usage.prompt_tokens}, Completion: {response.usage.completion_tokens}, Total: {response.usage.total_tokens}")
+        
+        return result
     
-    return preprocessed_pil, noisy_image
+    except Exception as e:
+        logger.error(f"OpenAI API error: {str(e)}")
+        raise
+
+def normalize_ingredient_name(name: str) -> str:
+    """
+    Normalize ingredient name: lowercase, remove adjectives, singularize.
+    """
+    # Convert to lowercase
+    normalized = name.lower().strip()
+    
+    # Remove common prefixes/suffixes and adjectives
+    words = normalized.split()
+    filtered_words = []
+    
+    for word in words:
+        # Skip quantity/quality adjectives
+        if word not in QUANTITY_ADJECTIVES:
+            filtered_words.append(word)
+    
+    normalized = " ".join(filtered_words)
+    
+    # Remove special characters except spaces and hyphens
+    normalized = re.sub(r'[^\w\s-]', '', normalized)
+    
+    # Singularize (convert plural to singular)
+    try:
+        # Use inflect to singularize
+        words = normalized.split()
+        singularized_words = []
+        for word in words:
+            # Try to singularize each word
+            singular = inflect_engine.singular_noun(word)
+            if singular:
+                singularized_words.append(singular)
+            else:
+                singularized_words.append(word)
+        normalized = " ".join(singularized_words)
+    except Exception:
+        # If singularization fails, keep original
+        pass
+    
+    # Apply alias mapping
+    if normalized in INGREDIENT_ALIASES:
+        normalized = INGREDIENT_ALIASES[normalized]
+    
+    return normalized.strip()
+
+def filter_non_ingredients(ingredient_name: str) -> bool:
+    """
+    Check if ingredient name should be filtered out (non-ingredient items).
+    Returns True if should be kept, False if should be filtered out.
+    """
+    normalized = ingredient_name.lower()
+    
+    # Check deny list
+    if normalized in NON_INGREDIENT_DENY_LIST:
+        return False
+    
+    # Check if any word in the name is in deny list
+    words = normalized.split()
+    for word in words:
+        if word in NON_INGREDIENT_DENY_LIST:
+            return False
+    
+    return True
+
+def post_process_ingredients(raw_ingredients: List[Dict[str, Any]], min_confidence: float = DEFAULT_MIN_CONFIDENCE, top_k: Optional[int] = None) -> List[Dict[str, Any]]:
+    """
+    Post-process ingredients: normalize, filter, deduplicate, apply confidence threshold.
+    """
+    processed = []
+    seen_normalized = {}  # Map normalized name to best ingredient
+    
+    for ingredient in raw_ingredients:
+        name = ingredient.get("name", "").strip()
+        confidence = float(ingredient.get("confidence", 0.0))
+        
+        # Skip if confidence too low
+        if confidence < min_confidence:
+            continue
+        
+        # Skip if name is empty
+        if not name:
+            continue
+        
+        # Normalize name
+        normalized_name = normalize_ingredient_name(name)
+        
+        # Filter out non-ingredients
+        if not filter_non_ingredients(normalized_name):
+            continue
+        
+        # Deduplicate: keep highest confidence
+        if normalized_name not in seen_normalized:
+            seen_normalized[normalized_name] = {
+                "name": normalized_name,
+                "confidence": confidence
+            }
+        else:
+            # Update if this has higher confidence
+            if confidence > seen_normalized[normalized_name]["confidence"]:
+                seen_normalized[normalized_name] = {
+                    "name": normalized_name,
+                    "confidence": confidence
+                }
+    
+    # Convert to list and sort by confidence
+    processed = list(seen_normalized.values())
+    processed.sort(key=lambda x: x["confidence"], reverse=True)
+    
+    # Apply top_k limit
+    if top_k and top_k > 0:
+        processed = processed[:top_k]
+    
+    return processed
+
+def merge_ingredient_lists(ingredient_lists: List[List[Dict[str, Any]]], min_confidence: float = DEFAULT_MIN_CONFIDENCE) -> List[Dict[str, Any]]:
+    """
+    Merge multiple ingredient lists from multiple images, deduplicating by normalized name.
+    """
+    merged = {}
+    
+    for ingredient_list in ingredient_lists:
+        for ingredient in ingredient_list:
+            name = ingredient.get("name", "").strip()
+            confidence = float(ingredient.get("confidence", 0.0))
+            
+            # Skip if confidence too low
+            if confidence < min_confidence:
+                continue
+            
+            # Normalize name
+            normalized_name = normalize_ingredient_name(name)
+            
+            # Filter out non-ingredients
+            if not filter_non_ingredients(normalized_name):
+                continue
+            
+            # Deduplicate: keep highest confidence
+            if normalized_name not in merged:
+                merged[normalized_name] = {
+                    "name": normalized_name,
+                    "confidence": confidence
+                }
+            else:
+                # Update if this has higher confidence
+                if confidence > merged[normalized_name]["confidence"]:
+                    merged[normalized_name] = {
+                        "name": normalized_name,
+                        "confidence": confidence
+                    }
+    
+    # Convert to list and sort by confidence
+    result = list(merged.values())
+    result.sort(key=lambda x: x["confidence"], reverse=True)
+    
+    return result
 
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""
     return jsonify({"status": "healthy"}), 200
 
+@app.route('/classify-fridge', methods=['POST'])
+def classify_fridge():
+    """
+    Classify fridge image(s) using OpenAI Vision API.
+    
+    Accepts:
+    - One or more images (files with key 'images' or 'image')
+    - Optional: min_conf (float, default 0.90)
+    - Optional: top_k (int, default None)
+    - Optional: image_urls (list of URLs, for remote images)
+    
+    Returns:
+    - ingredients: List of {name, confidence}
+    - notes: Optional context
+    - diagnostics: Processing metadata
+    """
+    start_time = time.time()
+    
+    try:
+        # Get parameters
+        min_conf = float(request.form.get('min_conf', DEFAULT_MIN_CONFIDENCE))
+        top_k = request.form.get('top_k')
+        top_k = int(top_k) if top_k else None
+        
+        # Get model preference
+        model = FALLBACK_MODEL if USE_FALLBACK else PRIMARY_MODEL
+        
+        # Get images from files or URLs
+        images = []
+        
+        # Handle file uploads
+        if 'images' in request.files:
+            files = request.files.getlist('images')
+            images.extend([f for f in files if f.filename])
+        elif 'image' in request.files:
+            file = request.files['image']
+            if file.filename:
+                images.append(file)
+        
+        # Handle image URLs (if provided)
+        image_urls = request.form.getlist('image_urls') if 'image_urls' in request.form else []
+        
+        if not images and not image_urls:
+            return jsonify({"error": "No images provided. Please provide image files or URLs."}), 400
+        
+        # Process each image
+        all_ingredients = []
+        all_notes = []
+        diagnostics = {
+            "images_processed": 0,
+            "images_failed": 0,
+            "processing_times": [],
+            "model_used": model
+        }
+        
+        # Process file uploads
+        for image_file in images:
+            try:
+                img_start_time = time.time()
+                
+                # Read image
+                image_bytes = image_file.read()
+                image_pil = Image.open(io.BytesIO(image_bytes))
+                
+                # Validate image quality
+                is_valid, error_msg = validate_image_quality(image_pil)
+                if not is_valid:
+                    logger.warning(f"Image validation failed: {error_msg}")
+                    diagnostics["images_failed"] += 1
+                    continue
+                
+                # Optimize image size
+                image_pil = optimize_image_size(image_pil, max_dimension=1024)
+                
+                # Convert to base64
+                image_base64 = image_to_base64(image_pil)
+                
+                # Classify with OpenAI
+                result = classify_image_with_openai(image_base64, model=model)
+                
+                # Extract ingredients and notes
+                ingredients = result.get("ingredients", [])
+                notes = result.get("notes", "")
+                
+                if notes:
+                    all_notes.append(notes)
+                
+                all_ingredients.append(ingredients)
+                diagnostics["images_processed"] += 1
+                
+                img_processing_time = time.time() - img_start_time
+                diagnostics["processing_times"].append(img_processing_time)
+                
+                logger.info(f"Processed image in {img_processing_time:.2f}s, found {len(ingredients)} ingredients")
+                
+            except Exception as e:
+                logger.error(f"Error processing image: {str(e)}")
+                diagnostics["images_failed"] += 1
+                continue
+        
+        # Process image URLs (if any)
+        # Note: This would require fetching URLs, validating TTL, etc.
+        # For now, we'll skip URL processing in the initial implementation
+        # but leave the structure for future implementation
+        
+        if not all_ingredients:
+            return jsonify({
+                "error": "No images were successfully processed.",
+                "diagnostics": diagnostics
+            }), 400
+        
+        # Merge ingredients from multiple images
+        if len(all_ingredients) > 1:
+            final_ingredients = merge_ingredient_lists(all_ingredients, min_confidence=min_conf)
+        else:
+            final_ingredients = post_process_ingredients(all_ingredients[0], min_confidence=min_conf, top_k=top_k)
+        
+        # Combine notes
+        combined_notes = " ".join(all_notes).strip() if all_notes else None
+        
+        total_time = time.time() - start_time
+        diagnostics["total_processing_time"] = total_time
+        diagnostics["ingredients_returned"] = len(final_ingredients)
+        
+        logger.info(f"Classification complete: {len(final_ingredients)} ingredients in {total_time:.2f}s")
+        
+        response = {
+            "ingredients": final_ingredients,
+            "diagnostics": diagnostics
+        }
+        
+        if combined_notes:
+            response["notes"] = combined_notes
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logger.error(f"Error in classify_fridge: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Failed to classify image: {str(e)}"}), 500
+
+# Keep the old endpoint for backward compatibility, but route to new system
 @app.route('/api/analyze-fridge', methods=['POST'])
 def analyze_fridge():
     """
-    Analyze fridge image using Roboflow model
-    Expects: multipart/form-data with 'image' file and optional 'preferences' JSON
+    Legacy endpoint - analyzes fridge and generates recipes.
+    Uses new classification system but maintains old API contract.
     """
     try:
-        # Check if image is provided
+        # Get preferences if provided
+        preferences = {}
+        if 'preferences' in request.form:
+            preferences = json.loads(request.form['preferences'])
+        
+        # Use new classification endpoint logic
+        min_conf = float(request.form.get('min_conf', 0.80))  # Lower threshold for legacy endpoint
+        
+        # Get image
         if 'image' not in request.files:
             return jsonify({"error": "No image provided"}), 400
         
@@ -96,58 +591,30 @@ def analyze_fridge():
         if image_file.filename == '':
             return jsonify({"error": "No image selected"}), 400
         
-        # Get preferences if provided
-        preferences = {}
-        if 'preferences' in request.form:
-            preferences = json.loads(request.form['preferences'])
-        
-        # Read image file
+        # Process image through new classification system
         image_bytes = image_file.read()
+        image_pil = Image.open(io.BytesIO(image_bytes))
         
-        # Convert to PIL Image for processing
-        original_image = Image.open(io.BytesIO(image_bytes))
+        # Validate and optimize
+        is_valid, error_msg = validate_image_quality(image_pil)
+        if not is_valid:
+            return jsonify({"error": error_msg}), 400
         
-        # Preprocess image to match dataset style (noise + cutouts)
-        print("Preprocessing image with noise and cutouts...")
-        preprocessed_image_pil, preprocessed_image_cv = preprocess_image(original_image)
+        image_pil = optimize_image_size(image_pil, max_dimension=1024)
+        image_base64 = image_to_base64(image_pil)
         
-        # Encode preprocessed image as base64 for frontend display
-        _, buffer = cv2.imencode('.jpg', preprocessed_image_cv, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        preprocessed_image_base64 = base64.b64encode(buffer).decode('utf-8')
-        preprocessed_image_base64 = f"data:image/jpeg;base64,{preprocessed_image_base64}"
+        # Classify
+        model = FALLBACK_MODEL if USE_FALLBACK else PRIMARY_MODEL
+        result = classify_image_with_openai(image_base64, model=model)
+        raw_ingredients = result.get("ingredients", [])
         
-        print("Image preprocessing complete. Using preprocessed image for inference.")
+        # Post-process
+        ingredients = post_process_ingredients(raw_ingredients, min_confidence=min_conf)
         
-        # Run inference with Roboflow on preprocessed image
-        result = CLIENT.infer(preprocessed_image_pil, model_id=MODEL_ID)
-        
-        # Process results to extract detected ingredients
-        ingredients = []
-        if result and 'predictions' in result:
-            # Extract unique ingredient names with confidence scores
-            seen_ingredients = {}
-            for prediction in result['predictions']:
-                class_name = prediction.get('class', '').strip()
-                confidence = prediction.get('confidence', 0)
-                
-                if class_name:
-                    # If we've seen this ingredient, keep the one with higher confidence
-                    if class_name not in seen_ingredients or confidence > seen_ingredients[class_name]['confidence']:
-                        seen_ingredients[class_name] = {
-                            'name': class_name,
-                            'confidence': confidence
-                        }
-            
-            # Convert to list and sort by confidence
-            ingredients = list(seen_ingredients.values())
-            ingredients.sort(key=lambda x: x['confidence'], reverse=True)
-        
-        # Generate recipes using Gemini AI based on detected ingredients
-        print(f"Generating recipes for {len(ingredients)} ingredients")
+        # Generate recipes using Gemini (keep existing recipe generation)
         recipes = generate_recipes(ingredients, preferences)
-        print(f"Generated {len(recipes)} recipes")
         
-        # Extract missing ingredients from recipes
+        # Extract missing ingredients
         detected_ingredient_names = [ing['name'].lower() for ing in ingredients]
         missing_ingredients = []
         for recipe in recipes:
@@ -155,36 +622,36 @@ def analyze_fridge():
                 if missing not in missing_ingredients:
                     missing_ingredients.append(missing)
         
-        # Generate shopping suggestions (mock data for now)
+        # Generate shopping suggestions
         shopping_suggestions = generate_shopping_suggestions(missing_ingredients)
-        
-        print(f"Returning: {len(ingredients)} ingredients, {len(recipes)} recipes, {len(missing_ingredients)} missing ingredients")
         
         return jsonify({
             "ingredients": ingredients,
             "recipes": recipes,
             "missingIngredients": missing_ingredients,
-            "shoppingSuggestions": shopping_suggestions,
-            "preprocessedImage": preprocessed_image_base64  # For debugging
+            "shoppingSuggestions": shopping_suggestions
         }), 200
         
     except Exception as e:
-        print(f"Error analyzing fridge: {str(e)}")
+        logger.error(f"Error in analyze_fridge: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": f"Failed to analyze image: {str(e)}"}), 500
 
 def generate_recipes(ingredients, preferences):
     """
-    Generate recipe suggestions using Google Gemini AI based on detected ingredients
+    Generate recipe suggestions using Google Gemini AI based on detected ingredients.
+    Keep existing implementation for now.
     """
     try:
         # Extract ingredient names
         ingredient_names = [ing['name'] for ing in ingredients]
         
         if not ingredient_names:
-            print("No ingredients provided, returning empty recipes")
+            logger.info("No ingredients provided, returning empty recipes")
             return []
         
-        print(f"Starting recipe generation for ingredients: {ingredient_names}")
+        logger.info(f"Starting recipe generation for ingredients: {ingredient_names}")
         
         # Build preferences string
         pref_strings = []
@@ -203,8 +670,24 @@ def generate_recipes(ingredients, preferences):
         
         preferences_text = ", ".join(pref_strings) if pref_strings else "no specific dietary restrictions"
         
-        # Create prompt for Gemini
-        prompt = f"""Generate 4 recipe recommendations based on these available ingredients: {', '.join(ingredient_names)}.
+        # Use Gemini for recipe generation (optional - can be replaced with OpenAI)
+        try:
+            import google.generativeai as genai
+            import requests
+            
+            GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+            GEMINI_MODEL = os.getenv("GEMINI_MODEL", "google/gemini-2.5-flash")
+            
+            if not GEMINI_API_KEY:
+                logger.warning("GEMINI_API_KEY not set, skipping recipe generation")
+                return []
+            
+            # Extract model name
+            GEMINI_MODEL_NAME = GEMINI_MODEL.replace("google/", "") if "/" in GEMINI_MODEL else GEMINI_MODEL
+            GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL_NAME}:generateContent"
+            
+            # Create prompt for recipe generation
+            prompt = f"""Generate 4 recipe recommendations based on these available ingredients: {', '.join(ingredient_names)}.
 
 User preferences: {preferences_text}
 
@@ -231,21 +714,12 @@ Return ONLY a valid JSON array with this exact structure (no markdown, no code b
 ]
 
 Make sure the recipes are practical, use the available ingredients creatively, and respect the user's dietary preferences. The availableIngredients should be a subset of the provided ingredients list."""
-
-        # Call Gemini API using direct HTTP request
-        print(f"Calling Gemini API with {len(ingredient_names)} ingredients")
-        print(f"Using model: {GEMINI_MODEL_NAME} via URL: {GEMINI_URL}")
-        
-        try:
-            # Make direct HTTP request to Gemini API
-            headers = {
-                'Content-Type': 'application/json',
-            }
+            
+            # Call Gemini API
+            headers = {'Content-Type': 'application/json'}
             payload = {
                 "contents": [{
-                    "parts": [{
-                        "text": prompt
-                    }]
+                    "parts": [{"text": prompt}]
                 }]
             }
             
@@ -259,8 +733,6 @@ Make sure the recipes are practical, use the available ingredients creatively, a
             response.raise_for_status()
             response_data = response.json()
             
-            print(f"Gemini API call successful, status: {response.status_code}")
-            
             # Extract text from response
             response_text = None
             if 'candidates' in response_data and len(response_data['candidates']) > 0:
@@ -268,87 +740,42 @@ Make sure the recipes are practical, use the available ingredients creatively, a
                 if 'content' in candidate and 'parts' in candidate['content']:
                     if len(candidate['content']['parts']) > 0:
                         response_text = candidate['content']['parts'][0].get('text', '').strip()
-                        print("Extracted text from API response")
-                    else:
-                        print("No parts in candidate content")
-                else:
-                    print(f"Candidate structure: {candidate.keys()}")
-            else:
-                print(f"Unexpected response format: {response_data}")
-                return []
             
             if not response_text:
-                print("No text extracted from Gemini response")
+                logger.warning("No response from Gemini API")
                 return []
-                
-        except requests.exceptions.RequestException as api_error:
-            print(f"Gemini API HTTP request failed: {str(api_error)}")
-            # Fallback to SDK method
-            print("Falling back to SDK method...")
-            try:
-                model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-                response = model.generate_content(prompt)
-                if hasattr(response, 'text'):
-                    response_text = response.text.strip()
-                elif hasattr(response, 'candidates') and len(response.candidates) > 0:
-                    candidate = response.candidates[0]
-                    if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
-                        if len(candidate.content.parts) > 0:
-                            response_text = candidate.content.parts[0].text.strip()
-                if not response_text:
-                    return []
-            except Exception as sdk_error:
-                print(f"SDK fallback also failed: {str(sdk_error)}")
-                import traceback
-                traceback.print_exc()
-                return []
-        except Exception as api_error:
-            print(f"Gemini API call failed: {str(api_error)}")
-            import traceback
-            traceback.print_exc()
+            
+            # Remove markdown code blocks if present
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            elif response_text.startswith("```"):
+                response_text = response_text[3:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+            response_text = response_text.strip()
+            
+            # Parse JSON response
+            recipes = json.loads(response_text)
+            
+            # Ensure it's a list
+            if not isinstance(recipes, list):
+                recipes = [recipes]
+            
+            logger.info(f"Successfully generated {len(recipes)} recipes")
+            return recipes[:4]  # Limit to 4 recipes
+            
+        except Exception as recipe_error:
+            logger.error(f"Error generating recipes with Gemini: {str(recipe_error)}")
             return []
         
-        print(f"Gemini raw response: {response_text[:200]}...")  # Log first 200 chars
-        
-        # Remove markdown code blocks if present
-        if response_text.startswith("```json"):
-            response_text = response_text[7:]
-        elif response_text.startswith("```"):
-            response_text = response_text[3:]
-        if response_text.endswith("```"):
-            response_text = response_text[:-3]
-        response_text = response_text.strip()
-        
-        # Parse JSON response
-        recipes = json.loads(response_text)
-        
-        # Ensure it's a list
-        if not isinstance(recipes, list):
-            recipes = [recipes]
-        
-        print(f"Successfully parsed {len(recipes)} recipes from Gemini")
-        
-        # Limit to 4 recipes
-        return recipes[:4]
-        
-    except json.JSONDecodeError as e:
-        print(f"Error parsing Gemini JSON response: {e}")
-        print(f"Response was: {response_text if 'response_text' in locals() else 'N/A'}")
-        import traceback
-        traceback.print_exc()
-        # Fallback to empty list
-        return []
     except Exception as e:
-        print(f"Error generating recipes with Gemini: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        # Fallback to empty list
+        logger.error(f"Error generating recipes: {str(e)}")
         return []
 
 def generate_shopping_suggestions(missing_ingredients):
     """
-    Generate shopping suggestions with eco-scores
-    This is mock data - in production, integrate with store APIs
+    Generate shopping suggestions with eco-scores.
+    This is mock data - in production, integrate with store APIs.
     """
     suggestions = []
     
@@ -390,4 +817,3 @@ def generate_shopping_suggestions(missing_ingredients):
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
-

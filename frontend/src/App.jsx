@@ -59,192 +59,40 @@ function App() {
     setShoppingSuggestions(null)
     setActiveTab('ingredients') // Reset to ingredients tab when analyzing
 
-    // TODO: Replace with actual API call when computer vision is integrated
-    // Example API call structure:
-    // const formData = new FormData()
-    // formData.append('image', image)
-    // formData.append('preferences', JSON.stringify(preferences))
-    // 
-    // const response = await fetch('/api/analyze-fridge', {
-    //   method: 'POST',
-    //   body: formData
-    // })
-    // const data = await response.json()
-    // setIngredients(data.ingredients)
-    // setRecipes(data.recipes)
-    // setMissingIngredients(data.missingIngredients)
-    // setShoppingSuggestions(data.shoppingSuggestions)
-
-    // Mock data simulation
-    setTimeout(() => {
-      setIngredients([
-        { name: 'Tomatoes', confidence: 0.92 },
-        { name: 'Onions', confidence: 0.88 },
-        { name: 'Garlic', confidence: 0.85 },
-        { name: 'Chicken Breast', confidence: 0.91 },
-        { name: 'Bell Peppers', confidence: 0.87 },
-        { name: 'Mushrooms', confidence: 0.83 },
-        { name: 'Spinach', confidence: 0.89 }
-      ])
+    try {
+      // Prepare form data
+      const formData = new FormData()
+      formData.append('image', image)
+      formData.append('preferences', JSON.stringify(preferences))
       
-      setMissingIngredients([
-        'Olive Oil',
-        'Black Beans',
-        'Quinoa'
-      ])
-
-      // Filter recipes based on preferences
-      const allRecipes = [
-        {
-          name: 'Chicken Stir-Fry',
-          description: 'A quick and healthy stir-fry with your available ingredients',
-          prepTime: '15 min',
-          cookTime: '20 min',
-          missingIngredients: ['Olive Oil'],
-          tags: ['high-protein', 'gluten-free']
-        },
-        {
-          name: 'Mediterranean Quinoa Bowl',
-          description: 'Fresh and vibrant bowl with quinoa, vegetables, and herbs',
-          prepTime: '10 min',
-          cookTime: '20 min',
-          missingIngredients: ['Quinoa', 'Olive Oil'],
-          tags: ['vegetarian', 'gluten-free', 'high-protein']
-        },
-        {
-          name: 'Stuffed Bell Peppers',
-          description: 'Hearty bell peppers stuffed with chicken and vegetables',
-          prepTime: '20 min',
-          cookTime: '45 min',
-          missingIngredients: ['Olive Oil'],
-          tags: ['high-protein', 'gluten-free']
-        },
-        {
-          name: 'Black Bean and Mushroom Tacos',
-          description: 'Flavorful vegetarian tacos with black beans and mushrooms',
-          prepTime: '15 min',
-          cookTime: '25 min',
-          missingIngredients: ['Black Beans', 'Olive Oil'],
-          tags: ['vegetarian', 'vegan-option', 'spicy']
-        }
-      ]
-
-      // Filter recipes based on preferences
-      let filteredRecipes = allRecipes
-      if (preferences.vegan || preferences.vegetarian) {
-        filteredRecipes = filteredRecipes.filter(r => 
-          r.tags.includes('vegetarian') || r.tags.includes('vegan-option')
-        )
+      // Get API URL from environment or use default
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+      
+      // Call the backend API
+      const response = await fetch(`${apiUrl}/api/analyze-fridge`, {
+        method: 'POST',
+        body: formData
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+        throw new Error(errorData.error || `Server error: ${response.status}`)
       }
-      if (preferences.lowCarb) {
-        filteredRecipes = filteredRecipes.filter(r => 
-          !r.tags.includes('high-carb')
-        )
-      }
-
-      setRecipes(filteredRecipes.slice(0, 4))
-
-      // Mock shopping suggestions with eco-scores
-      setShoppingSuggestions([
-        {
-          ingredient: 'Olive Oil',
-          stores: [
-            {
-              name: 'Local Farmers Market',
-              distance: '0.5 mi',
-              ecoScore: 95,
-              sustainability: 'Excellent',
-              rating: 'Local sourcing, zero-waste packaging',
-              price: '$8.99'
-            },
-            {
-              name: 'Whole Foods Market',
-              distance: '2.1 mi',
-              ecoScore: 82,
-              sustainability: 'Very Good',
-              rating: 'Organic options, sustainable packaging',
-              price: '$12.99'
-            },
-            {
-              name: 'Trader Joe\'s',
-              distance: '3.5 mi',
-              ecoScore: 75,
-              sustainability: 'Good',
-              rating: 'Sustainable sourcing, recyclable packaging',
-              price: '$9.99'
-            },
-            {
-              name: 'Amazon Fresh',
-              distance: 'Delivery',
-              ecoScore: 58,
-              sustainability: 'Fair',
-              rating: 'Carbon footprint from delivery, mixed sourcing',
-              price: '$10.99'
-            }
-          ]
-        },
-        {
-          ingredient: 'Black Beans',
-          stores: [
-            {
-              name: 'Local Farmers Market',
-              distance: '0.5 mi',
-              ecoScore: 92,
-              sustainability: 'Excellent',
-              rating: 'Locally grown, bulk purchase option',
-              price: '$3.50/lb'
-            },
-            {
-              name: 'Whole Foods Market',
-              distance: '2.1 mi',
-              ecoScore: 85,
-              sustainability: 'Very Good',
-              rating: 'Organic, sustainable farming practices',
-              price: '$4.99/lb'
-            },
-            {
-              name: 'Trader Joe\'s',
-              distance: '3.5 mi',
-              ecoScore: 78,
-              sustainability: 'Good',
-              rating: 'Sustainable sourcing, minimal packaging',
-              price: '$3.99/lb'
-            }
-          ]
-        },
-        {
-          ingredient: 'Quinoa',
-          stores: [
-            {
-              name: 'Local Co-op',
-              distance: '1.2 mi',
-              ecoScore: 88,
-              sustainability: 'Very Good',
-              rating: 'Fair trade, bulk options available',
-              price: '$6.99/lb'
-            },
-            {
-              name: 'Whole Foods Market',
-              distance: '2.1 mi',
-              ecoScore: 80,
-              sustainability: 'Good',
-              rating: 'Organic, fair trade certified',
-              price: '$8.99/lb'
-            },
-            {
-              name: 'Amazon Fresh',
-              distance: 'Delivery',
-              ecoScore: 65,
-              sustainability: 'Fair',
-              rating: 'Delivery carbon footprint, standard sourcing',
-              price: '$7.49/lb'
-            }
-          ]
-        }
-      ])
-
+      
+      const data = await response.json()
+      
+      // Update state with API response
+      setIngredients(data.ingredients || [])
+      setRecipes(data.recipes || [])
+      setMissingIngredients(data.missingIngredients || [])
+      setShoppingSuggestions(data.shoppingSuggestions || [])
+      
+    } catch (err) {
+      console.error('Error analyzing fridge:', err)
+      setError(err.message || 'Failed to analyze image. Please make sure the backend server is running.')
+    } finally {
       setLoading(false)
-    }, 2000)
+    }
   }
 
   const handleReset = () => {

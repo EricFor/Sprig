@@ -5,6 +5,13 @@ import base64
 import io
 from PIL import Image
 import os
+import google.generativeai as genai
+import json
+import requests
+from typing import Optional, Any
+import cv2
+import numpy as np
+import random
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
@@ -16,6 +23,58 @@ CLIENT = InferenceHTTPClient(
 )
 
 MODEL_ID = "refrigerator-food/3"
+
+# Initialize Gemini AI
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyAJL3YKnXY5wzfyguhG3GV3z9ZbezDNVNo")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "google/gemini-2.5-flash")
+
+# Extract model name from "google/gemini-2.5-flash" format to "gemini-2.5-flash"
+GEMINI_MODEL_NAME = GEMINI_MODEL.replace("google/", "") if "/" in GEMINI_MODEL else GEMINI_MODEL
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL_NAME}:generateContent"
+
+# Also configure the SDK as fallback
+genai.configure(api_key=GEMINI_API_KEY)
+
+def preprocess_image(image_pil):
+    """
+    Preprocess image to match dataset style with noise and cutouts
+    Similar to the sample image with heavy noise and black rectangular occlusions
+    """
+    # Convert PIL to OpenCV format
+    image_cv = cv2.cvtColor(np.array(image_pil), cv2.COLOR_RGB2BGR)
+    h, w = image_cv.shape[:2]
+    
+    # Add heavy noise (similar to sample image)
+    noise_intensity = 0.15
+    noise = np.random.normal(0, noise_intensity * 255, image_cv.shape).astype(np.float32)
+    noisy_image = image_cv.astype(np.float32) + noise
+    noisy_image = np.clip(noisy_image, 0, 255).astype(np.uint8)
+    
+    # Add black rectangular cutouts (occlusions)
+    # 10x smaller by area means ~3.16x smaller dimensions (sqrt(10) ≈ 3.16)
+    num_cutouts = random.randint(8, 15)  # Random number of cutouts
+    cutout_size_range = (13, 38)  # Size range for cutouts (10x smaller area: 126/3.16 to 379/3.16)
+    
+    for _ in range(num_cutouts):
+        # Random position
+        x = random.randint(0, w - cutout_size_range[1])
+        y = random.randint(0, h - cutout_size_range[1])
+        
+        # Random size within range
+        cutout_w = random.randint(cutout_size_range[0], cutout_size_range[1])
+        cutout_h = random.randint(cutout_size_range[0], cutout_size_range[1])
+        
+        # Ensure cutout doesn't go out of bounds
+        x = min(x, w - cutout_w)
+        y = min(y, h - cutout_h)
+        
+        # Draw black rectangle (cutout)
+        noisy_image[y:y+cutout_h, x:x+cutout_w] = 0
+    
+    # Convert back to PIL
+    preprocessed_pil = Image.fromarray(cv2.cvtColor(noisy_image, cv2.COLOR_BGR2RGB))
+    
+    return preprocessed_pil, noisy_image
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -40,17 +99,27 @@ def analyze_fridge():
         # Get preferences if provided
         preferences = {}
         if 'preferences' in request.form:
-            import json
             preferences = json.loads(request.form['preferences'])
         
         # Read image file
         image_bytes = image_file.read()
         
         # Convert to PIL Image for processing
-        image = Image.open(io.BytesIO(image_bytes))
+        original_image = Image.open(io.BytesIO(image_bytes))
         
-        # Run inference with Roboflow
-        result = CLIENT.infer(image, model_id=MODEL_ID)
+        # Preprocess image to match dataset style (noise + cutouts)
+        print("Preprocessing image with noise and cutouts...")
+        preprocessed_image_pil, preprocessed_image_cv = preprocess_image(original_image)
+        
+        # Encode preprocessed image as base64 for frontend display
+        _, buffer = cv2.imencode('.jpg', preprocessed_image_cv, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        preprocessed_image_base64 = base64.b64encode(buffer).decode('utf-8')
+        preprocessed_image_base64 = f"data:image/jpeg;base64,{preprocessed_image_base64}"
+        
+        print("Image preprocessing complete. Using preprocessed image for inference.")
+        
+        # Run inference with Roboflow on preprocessed image
+        result = CLIENT.infer(preprocessed_image_pil, model_id=MODEL_ID)
         
         # Process results to extract detected ingredients
         ingredients = []
@@ -73,9 +142,10 @@ def analyze_fridge():
             ingredients = list(seen_ingredients.values())
             ingredients.sort(key=lambda x: x['confidence'], reverse=True)
         
-        # Generate mock recipes based on detected ingredients
-        # In a real app, you'd use a recipe API or database
+        # Generate recipes using Gemini AI based on detected ingredients
+        print(f"Generating recipes for {len(ingredients)} ingredients")
         recipes = generate_recipes(ingredients, preferences)
+        print(f"Generated {len(recipes)} recipes")
         
         # Extract missing ingredients from recipes
         detected_ingredient_names = [ing['name'].lower() for ing in ingredients]
@@ -88,11 +158,14 @@ def analyze_fridge():
         # Generate shopping suggestions (mock data for now)
         shopping_suggestions = generate_shopping_suggestions(missing_ingredients)
         
+        print(f"Returning: {len(ingredients)} ingredients, {len(recipes)} recipes, {len(missing_ingredients)} missing ingredients")
+        
         return jsonify({
             "ingredients": ingredients,
             "recipes": recipes,
             "missingIngredients": missing_ingredients,
-            "shoppingSuggestions": shopping_suggestions
+            "shoppingSuggestions": shopping_suggestions,
+            "preprocessedImage": preprocessed_image_base64  # For debugging
         }), 200
         
     except Exception as e:
@@ -101,94 +174,176 @@ def analyze_fridge():
 
 def generate_recipes(ingredients, preferences):
     """
-    Generate recipe suggestions based on detected ingredients
-    This is a simplified version - in production, use a recipe API
+    Generate recipe suggestions using Google Gemini AI based on detected ingredients
     """
-    ingredient_names = [ing['name'].lower() for ing in ingredients]
-    
-    # Recipe database (simplified)
-    all_recipes = [
-        {
-            "name": "Chicken Stir-Fry",
-            "description": "A quick and healthy stir-fry with your available ingredients",
-            "prepTime": "15 min",
-            "cookTime": "20 min",
-            "missingIngredients": ["Olive Oil"],
-            "tags": ["high-protein", "gluten-free"],
-            "requiredIngredients": ["chicken", "bell pepper", "onion"]
-        },
-        {
-            "name": "Mediterranean Quinoa Bowl",
-            "description": "Fresh and vibrant bowl with quinoa, vegetables, and herbs",
-            "prepTime": "10 min",
-            "cookTime": "20 min",
-            "missingIngredients": ["Quinoa", "Olive Oil"],
-            "tags": ["vegetarian", "gluten-free", "high-protein"],
-            "requiredIngredients": ["tomato", "cucumber", "onion"]
-        },
-        {
-            "name": "Stuffed Bell Peppers",
-            "description": "Hearty bell peppers stuffed with chicken and vegetables",
-            "prepTime": "20 min",
-            "cookTime": "45 min",
-            "missingIngredients": ["Olive Oil"],
-            "tags": ["high-protein", "gluten-free"],
-            "requiredIngredients": ["bell pepper", "chicken", "onion"]
-        },
-        {
-            "name": "Black Bean and Mushroom Tacos",
-            "description": "Flavorful vegetarian tacos with black beans and mushrooms",
-            "prepTime": "15 min",
-            "cookTime": "25 min",
-            "missingIngredients": ["Black Beans", "Olive Oil"],
-            "tags": ["vegetarian", "vegan-option", "spicy"],
-            "requiredIngredients": ["mushroom", "onion"]
-        },
-        {
-            "name": "Caprese Salad",
-            "description": "Classic Italian salad with fresh tomatoes, mozzarella, and basil",
-            "prepTime": "10 min",
-            "cookTime": "0 min",
-            "missingIngredients": ["Mozzarella", "Basil", "Olive Oil"],
-            "tags": ["vegetarian", "gluten-free", "low-carb"],
-            "requiredIngredients": ["tomato"]
-        },
-        {
-            "name": "Vegetable Stir-Fry",
-            "description": "Colorful mix of fresh vegetables in a savory sauce",
-            "prepTime": "15 min",
-            "cookTime": "15 min",
-            "missingIngredients": ["Soy Sauce", "Olive Oil"],
-            "tags": ["vegetarian", "vegan-option", "gluten-free"],
-            "requiredIngredients": ["bell pepper", "onion", "mushroom"]
-        }
-    ]
-    
-    # Filter recipes based on available ingredients
-    matching_recipes = []
-    for recipe in all_recipes:
-        required = recipe.get("requiredIngredients", [])
-        # Check if at least one required ingredient is available
-        if any(req in ingredient_names for req in required):
-            matching_recipes.append(recipe)
-    
-    # Apply preference filters
-    filtered_recipes = matching_recipes
-    if preferences.get('vegan') or preferences.get('vegetarian'):
-        filtered_recipes = [r for r in filtered_recipes if 
-                          'vegetarian' in r['tags'] or 'vegan-option' in r['tags']]
-    if preferences.get('lowCarb'):
-        filtered_recipes = [r for r in filtered_recipes if 
-                          'low-carb' in r['tags']]
-    if preferences.get('glutenFree'):
-        filtered_recipes = [r for r in filtered_recipes if 
-                          'gluten-free' in r['tags']]
-    
-    # Remove requiredIngredients from response (internal use only)
-    for recipe in filtered_recipes:
-        recipe.pop('requiredIngredients', None)
-    
-    return filtered_recipes[:4]  # Return top 4 matches
+    try:
+        # Extract ingredient names
+        ingredient_names = [ing['name'] for ing in ingredients]
+        
+        if not ingredient_names:
+            print("No ingredients provided, returning empty recipes")
+            return []
+        
+        print(f"Starting recipe generation for ingredients: {ingredient_names}")
+        
+        # Build preferences string
+        pref_strings = []
+        if preferences.get('vegan'):
+            pref_strings.append("vegan")
+        if preferences.get('vegetarian'):
+            pref_strings.append("vegetarian")
+        if preferences.get('spicy'):
+            pref_strings.append("spicy")
+        if preferences.get('lowCarb'):
+            pref_strings.append("low-carb")
+        if preferences.get('glutenFree'):
+            pref_strings.append("gluten-free")
+        if preferences.get('dairyFree'):
+            pref_strings.append("dairy-free")
+        
+        preferences_text = ", ".join(pref_strings) if pref_strings else "no specific dietary restrictions"
+        
+        # Create prompt for Gemini
+        prompt = f"""Generate 4 recipe recommendations based on these available ingredients: {', '.join(ingredient_names)}.
+
+User preferences: {preferences_text}
+
+For each recipe, provide:
+1. A creative and appealing recipe name
+2. A brief description (1-2 sentences)
+3. Prep time in minutes
+4. Cook time in minutes
+5. List of available ingredients used from the provided list: {', '.join(ingredient_names)}
+6. List of missing ingredients needed (common pantry items like oil, salt, pepper can be assumed)
+7. Relevant tags (e.g., "vegetarian", "vegan-option", "high-protein", "gluten-free", "low-carb", "spicy")
+
+Return ONLY a valid JSON array with this exact structure (no markdown, no code blocks, just pure JSON):
+[
+  {{
+    "name": "Recipe Name",
+    "description": "Brief description",
+    "prepTime": "X min",
+    "cookTime": "X min",
+    "availableIngredients": ["Ingredient1", "Ingredient2"],
+    "missingIngredients": ["Ingredient1", "Ingredient2"],
+    "tags": ["tag1", "tag2"]
+  }}
+]
+
+Make sure the recipes are practical, use the available ingredients creatively, and respect the user's dietary preferences. The availableIngredients should be a subset of the provided ingredients list."""
+
+        # Call Gemini API using direct HTTP request
+        print(f"Calling Gemini API with {len(ingredient_names)} ingredients")
+        print(f"Using model: {GEMINI_MODEL_NAME} via URL: {GEMINI_URL}")
+        
+        try:
+            # Make direct HTTP request to Gemini API
+            headers = {
+                'Content-Type': 'application/json',
+            }
+            payload = {
+                "contents": [{
+                    "parts": [{
+                        "text": prompt
+                    }]
+                }]
+            }
+            
+            response = requests.post(
+                f"{GEMINI_URL}?key={GEMINI_API_KEY}",
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
+            
+            response.raise_for_status()
+            response_data = response.json()
+            
+            print(f"Gemini API call successful, status: {response.status_code}")
+            
+            # Extract text from response
+            response_text = None
+            if 'candidates' in response_data and len(response_data['candidates']) > 0:
+                candidate = response_data['candidates'][0]
+                if 'content' in candidate and 'parts' in candidate['content']:
+                    if len(candidate['content']['parts']) > 0:
+                        response_text = candidate['content']['parts'][0].get('text', '').strip()
+                        print("Extracted text from API response")
+                    else:
+                        print("No parts in candidate content")
+                else:
+                    print(f"Candidate structure: {candidate.keys()}")
+            else:
+                print(f"Unexpected response format: {response_data}")
+                return []
+            
+            if not response_text:
+                print("No text extracted from Gemini response")
+                return []
+                
+        except requests.exceptions.RequestException as api_error:
+            print(f"Gemini API HTTP request failed: {str(api_error)}")
+            # Fallback to SDK method
+            print("Falling back to SDK method...")
+            try:
+                model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+                response = model.generate_content(prompt)
+                if hasattr(response, 'text'):
+                    response_text = response.text.strip()
+                elif hasattr(response, 'candidates') and len(response.candidates) > 0:
+                    candidate = response.candidates[0]
+                    if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                        if len(candidate.content.parts) > 0:
+                            response_text = candidate.content.parts[0].text.strip()
+                if not response_text:
+                    return []
+            except Exception as sdk_error:
+                print(f"SDK fallback also failed: {str(sdk_error)}")
+                import traceback
+                traceback.print_exc()
+                return []
+        except Exception as api_error:
+            print(f"Gemini API call failed: {str(api_error)}")
+            import traceback
+            traceback.print_exc()
+            return []
+        
+        print(f"Gemini raw response: {response_text[:200]}...")  # Log first 200 chars
+        
+        # Remove markdown code blocks if present
+        if response_text.startswith("```json"):
+            response_text = response_text[7:]
+        elif response_text.startswith("```"):
+            response_text = response_text[3:]
+        if response_text.endswith("```"):
+            response_text = response_text[:-3]
+        response_text = response_text.strip()
+        
+        # Parse JSON response
+        recipes = json.loads(response_text)
+        
+        # Ensure it's a list
+        if not isinstance(recipes, list):
+            recipes = [recipes]
+        
+        print(f"Successfully parsed {len(recipes)} recipes from Gemini")
+        
+        # Limit to 4 recipes
+        return recipes[:4]
+        
+    except json.JSONDecodeError as e:
+        print(f"Error parsing Gemini JSON response: {e}")
+        print(f"Response was: {response_text if 'response_text' in locals() else 'N/A'}")
+        import traceback
+        traceback.print_exc()
+        # Fallback to empty list
+        return []
+    except Exception as e:
+        print(f"Error generating recipes with Gemini: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Fallback to empty list
+        return []
 
 def generate_shopping_suggestions(missing_ingredients):
     """

@@ -204,6 +204,7 @@ Create a `.env` file in the `backend` directory:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ROBOFLOW_API_KEY` | Your Roboflow API key | Required |
+| `GEMINI_API_KEY` | Your Google Gemini API key | Default provided |
 | `PORT` | Backend server port | `5000` |
 
 ### Frontend Environment Variables
@@ -214,12 +215,24 @@ Create a `.env` file in the `frontend` directory (optional):
 |----------|-------------|---------|
 | `VITE_API_URL` | Backend API URL | `http://localhost:5000` |
 
-## 🤖 Roboflow Model
+## 🤖 AI Models
+
+### Roboflow Model
 
 This project uses the **refrigerator-food** model from Roboflow:
 - **Model ID**: `refrigerator-food/3`
 - **Model URL**: https://universe.roboflow.com/personal-dvpdm/refrigerator-food
 - **Purpose**: Detects various food items commonly found in refrigerators
+
+### Google Gemini AI
+
+This project uses **Google Gemini** for intelligent recipe generation:
+- **Model**: `gemini-1.5-pro` or `gemini-1.5-flash` (auto-selected)
+- **Purpose**: Generates personalized recipe recommendations based on detected ingredients and user preferences
+- **Features**: 
+  - Creates creative recipe suggestions
+  - Identifies missing ingredients needed
+  - Respects dietary preferences (vegan, vegetarian, gluten-free, etc.)
 
 ## 🔧 Development
 
@@ -298,9 +311,10 @@ The production build will be in the `frontend/dist` directory.
 
 ## 📝 Notes
 
-- The recipe generation is currently using a simplified database. In production, you would integrate with a recipe API or database.
+- Recipe generation uses Google Gemini AI to create personalized recommendations based on detected ingredients.
 - Shopping suggestions are mock data. In production, integrate with store APIs or location services.
-- The model may not detect all food items perfectly. Results depend on image quality and food visibility.
+- The Roboflow model may not detect all food items perfectly. Results depend on image quality and food visibility.
+- Gemini API responses are parsed and formatted for the frontend automatically.
 
 ## 📄 License
 

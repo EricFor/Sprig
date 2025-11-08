@@ -81,6 +81,13 @@ function App() {
       
       const data = await response.json()
       
+      // Log the response for debugging
+      console.log('API Response:', data)
+      console.log('Ingredients:', data.ingredients)
+      console.log('Recipes:', data.recipes)
+      console.log('Missing Ingredients:', data.missingIngredients)
+      console.log('Shopping Suggestions:', data.shoppingSuggestions)
+      
       // Update state with API response
       setIngredients(data.ingredients || [])
       setRecipes(data.recipes || [])
@@ -118,7 +125,6 @@ function App() {
     const tabs = []
     if (ingredients && ingredients.length > 0) tabs.push({ id: 'ingredients', label: 'Ingredients', icon: '📋' })
     if (recipes && recipes.length > 0) tabs.push({ id: 'recipes', label: 'Recipes', icon: '🍳' })
-    if (missingIngredients && missingIngredients.length > 0) tabs.push({ id: 'missing', label: 'Missing', icon: '🛒' })
     if (shoppingSuggestions && shoppingSuggestions.length > 0) tabs.push({ id: 'shopping', label: 'Shopping', icon: '🌍' })
     return tabs
   }
@@ -133,7 +139,7 @@ function App() {
       setActiveTab(tabs[0].id)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ingredients, recipes, missingIngredients, shoppingSuggestions])
+  }, [ingredients, recipes, shoppingSuggestions])
 
   return (
     <div className="app">
@@ -224,7 +230,7 @@ function App() {
                 />
               </label>
             </div>
-          ) : (ingredients || recipes || shoppingSuggestions || missingIngredients) && availableTabs.length > 0 ? (
+          ) : (ingredients || recipes || shoppingSuggestions) && availableTabs.length > 0 ? (
             <div className="image-results-wrapper">
               <div className="image-wrapper">
                 <div className="image-preview-container">
@@ -275,29 +281,34 @@ function App() {
                                 )}
                               </div>
                               <p className="recipe-description">{recipe.description}</p>
+                              {recipe.availableIngredients && recipe.availableIngredients.length > 0 && (
+                                <div className="recipe-ingredients-section">
+                                  <div className="recipe-ingredients-label">✅ Available Ingredients:</div>
+                                  <div className="recipe-ingredients-list">
+                                    {recipe.availableIngredients.map((ingredient, i) => (
+                                      <span key={i} className="recipe-ingredient-tag available">
+                                        {ingredient}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                               <div className="recipe-meta">
                                 <span className="meta-item">⏱️ Prep: {recipe.prepTime}</span>
                                 <span className="meta-item">🔥 Cook: {recipe.cookTime}</span>
                                 {recipe.missingIngredients && recipe.missingIngredients.length > 0 && (
-                                  <span className="meta-item missing">
-                                    ⚠️ Missing: {recipe.missingIngredients.join(', ')}
-                                  </span>
+                                  <div className="recipe-missing-section">
+                                    <span className="meta-item missing-label">⚠️ Missing:</span>
+                                    <div className="recipe-missing-list">
+                                      {recipe.missingIngredients.map((ingredient, i) => (
+                                        <span key={i} className="recipe-missing-tag">
+                                          {ingredient}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
                                 )}
                               </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {activeTab === 'missing' && missingIngredients && missingIngredients.length > 0 && (
-                      <div className="missing-ingredients-card">
-                        <h2 className="section-title"> Missing Ingredients</h2>
-                        <p className="section-subtitle">Ingredients needed for recommended recipes</p>
-                        <div className="missing-list">
-                          {missingIngredients.map((ingredient, index) => (
-                            <div key={index} className="missing-ingredient-tag">
-                              {ingredient}
                             </div>
                           ))}
                         </div>
@@ -378,7 +389,7 @@ function App() {
             </div>
           )}
 
-          {imagePreview && !(ingredients || recipes || shoppingSuggestions || missingIngredients) && (
+          {imagePreview && !(ingredients || recipes || shoppingSuggestions) && (
             <button
               onClick={handleAnalyze}
               disabled={!image || loading}

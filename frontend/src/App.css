@@ -255,6 +255,40 @@
   background: rgba(245, 245, 240, 0.5);
 }
 
+.image-toggle {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 10;
+}
+
+.toggle-btn {
+  background: rgba(255, 255, 255, 0.95);
+  color: #5A7A4A;
+  border: 2px solid rgba(107, 142, 90, 0.3);
+  padding: 0.5rem 1rem;
+  border-radius: 12px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.85rem;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(107, 142, 90, 0.2);
+  backdrop-filter: blur(10px);
+}
+
+.toggle-btn:hover {
+  background: rgba(255, 255, 255, 1);
+  border-color: rgba(107, 142, 90, 0.5);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(107, 142, 90, 0.3);
+}
+
+.toggle-btn.active {
+  background: linear-gradient(135deg, rgba(107, 142, 90, 0.2) 0%, rgba(90, 122, 74, 0.2) 100%);
+  border-color: rgba(107, 142, 90, 0.6);
+  color: #5A7A4A;
+}
+
 .remove-image-btn {
   background: rgba(232, 196, 160, 0.9);
   color: #5A7A4A;
@@ -625,6 +659,70 @@
 
 .meta-item.missing {
   color: #C9976B;
+  font-weight: 500;
+}
+
+.recipe-ingredients-section {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: rgba(107, 142, 90, 0.08);
+  border-radius: 12px;
+  border: 1px solid rgba(107, 142, 90, 0.15);
+}
+
+.recipe-ingredients-label {
+  font-size: 0.9rem;
+  color: #5A7A4A;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+.recipe-ingredients-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.recipe-ingredient-tag {
+  background: linear-gradient(135deg, rgba(107, 142, 90, 0.2) 0%, rgba(90, 122, 74, 0.2) 100%);
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: #5A7A4A;
+  border: 1px solid rgba(107, 142, 90, 0.3);
+  font-weight: 500;
+}
+
+.recipe-ingredient-tag.available {
+  background: linear-gradient(135deg, rgba(107, 142, 90, 0.25) 0%, rgba(90, 122, 74, 0.25) 100%);
+}
+
+.recipe-missing-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.meta-item.missing-label {
+  color: #C9976B;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.recipe-missing-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.recipe-missing-tag {
+  background: linear-gradient(135deg, rgba(232, 196, 160, 0.4) 0%, rgba(212, 165, 116, 0.4) 100%);
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: #8B6F47;
+  border: 1px solid rgba(201, 151, 107, 0.4);
   font-weight: 500;
 }
 

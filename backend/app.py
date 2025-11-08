@@ -12,11 +12,14 @@ import cv2
 import numpy as np
 from openai import OpenAI
 import re
+from pathlib import Path
 from inflect import engine
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
 # Load environment variables from .env file
-load_dotenv()
+
+env_path = load_dotenv(dotenv_path = find_dotenv(), override=True)
+
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
@@ -38,7 +41,7 @@ FALLBACK_MODEL = os.getenv("OPENAI_MODEL_FALLBACK", "gpt-4o-mini")
 USE_FALLBACK = os.getenv("USE_FALLBACK_MODEL", "false").lower() == "true"
 
 # Default confidence threshold
-DEFAULT_MIN_CONFIDENCE = 0.90
+DEFAULT_MIN_CONFIDENCE = 0.85
 DEFAULT_TOP_K = None  # No limit by default
 
 # Initialize inflect engine for singularization

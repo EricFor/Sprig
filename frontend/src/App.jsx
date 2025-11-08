@@ -123,9 +123,9 @@ function App() {
   // Determine which tabs to show based on available data
   const getAvailableTabs = () => {
     const tabs = []
-    if (ingredients && ingredients.length > 0) tabs.push({ id: 'ingredients', label: 'Ingredients', icon: '📋' })
-    if (recipes && recipes.length > 0) tabs.push({ id: 'recipes', label: 'Recipes', icon: '🍳' })
-    if (shoppingSuggestions && shoppingSuggestions.length > 0) tabs.push({ id: 'shopping', label: 'Shopping', icon: '🌍' })
+    if (ingredients && ingredients.length > 0) tabs.push({ id: 'ingredients', label: 'Ingredients', icon: '' })
+    if (recipes && recipes.length > 0) tabs.push({ id: 'recipes', label: 'Recipes', icon: '' })
+    if (shoppingSuggestions && shoppingSuggestions.length > 0) tabs.push({ id: 'shopping', label: 'Shopping', icon: '' })
     return tabs
   }
 
@@ -144,9 +144,9 @@ function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1 className="title"> EcoFridge</h1>
-        <p className="subtitle">Intelligent Recipe Recommendation from Fridge Image Scanning</p>
-        <p className="tagline">Reduce food waste • Make sustainable choices • Discover delicious recipes</p>
+        <h1 className="title">Sprig</h1>
+        <p className="subtitle">Vision that cooks.</p>
+        <p className="tagline">Reduce food waste • Make healthier decisions • Discover delicious recipes</p>
       </header>
 
       <main className="main-content">
@@ -411,7 +411,7 @@ function App() {
       </main>
 
       <footer className="footer">
-        <p>Powered by EcoFridge AI • Reducing food waste through intelligent vision-based recipe recommendation</p>
+        <p>Powered by EcoFridge AI • Made with love • Not a substitute for professional medical advice! </p>
       </footer>
     </div>
   )

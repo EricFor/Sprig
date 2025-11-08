@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import './App.css'
+import { FaBowlFood } from "react-icons/fa6";
+
 
 function App() {
   const [image, setImage] = useState(null)
@@ -257,10 +259,10 @@ function App() {
   }
 
   const getEcoScoreColor = (score) => {
-    if (score >= 85) return '#4caf50'
-    if (score >= 70) return '#8bc34a'
-    if (score >= 55) return '#ffc107'
-    return '#ff9800'
+    if (score >= 85) return '#6B8E5A'
+    if (score >= 70) return '#7A9B6A'
+    if (score >= 55) return '#E8C4A0'
+    return '#D4A574'
   }
 
   // Determine which tabs to show based on available data
@@ -288,7 +290,7 @@ function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1 className="title">🌱 EcoFridge</h1>
+        <h1 className="title"> EcoFridge</h1>
         <p className="subtitle">Intelligent Recipe Recommendation from Fridge Image Scanning</p>
         <p className="tagline">Reduce food waste • Make sustainable choices • Discover delicious recipes</p>
       </header>
@@ -310,7 +312,7 @@ function App() {
                     checked={preferences.vegan}
                     onChange={() => handlePreferenceChange('vegan')}
                   />
-                  <span>🌿 Vegan</span>
+                  <span> Vegan</span>
                 </label>
                 <label className="preference-checkbox">
                   <input
@@ -318,7 +320,7 @@ function App() {
                     checked={preferences.vegetarian}
                     onChange={() => handlePreferenceChange('vegetarian')}
                   />
-                  <span>🥗 Vegetarian</span>
+                  <span> Vegetarian</span>
                 </label>
                 <label className="preference-checkbox">
                   <input
@@ -326,7 +328,7 @@ function App() {
                     checked={preferences.spicy}
                     onChange={() => handlePreferenceChange('spicy')}
                   />
-                  <span>🌶️ Spicy</span>
+                  <span> Spicy</span>
                 </label>
                 <label className="preference-checkbox">
                   <input
@@ -334,7 +336,7 @@ function App() {
                     checked={preferences.lowCarb}
                     onChange={() => handlePreferenceChange('lowCarb')}
                   />
-                  <span>🥑 Low-Carb</span>
+                  <span> Low-Carb</span>
                 </label>
                 <label className="preference-checkbox">
                   <input
@@ -342,7 +344,7 @@ function App() {
                     checked={preferences.glutenFree}
                     onChange={() => handlePreferenceChange('glutenFree')}
                   />
-                  <span>🌾 Gluten-Free</span>
+                  <span> Gluten-Free</span>
                 </label>
                 <label className="preference-checkbox">
                   <input
@@ -350,7 +352,7 @@ function App() {
                     checked={preferences.dairyFree}
                     onChange={() => handlePreferenceChange('dairyFree')}
                   />
-                  <span>🥛 Dairy-Free</span>
+                  <span> Dairy-Free</span>
                 </label>
               </div>
             </div>
@@ -358,8 +360,8 @@ function App() {
         </div>
 
         <div className="upload-section">
-          <div className="upload-container">
-            {!imagePreview ? (
+          {!imagePreview ? (
+            <div className="upload-container">
               <label className="upload-area" htmlFor="image-upload">
                 <div className="upload-icon">📸</div>
                 <p className="upload-text">Click to upload or drag and drop</p>
@@ -373,165 +375,180 @@ function App() {
                   className="file-input"
                 />
               </label>
-            ) : (
-              <div className="image-preview-container">
-                <img src={imagePreview} alt="Uploaded fridge" className="preview-image" />
+            </div>
+          ) : (ingredients || recipes || shoppingSuggestions || missingIngredients) && availableTabs.length > 0 ? (
+            <div className="image-results-wrapper">
+              <div className="image-wrapper">
+                <div className="image-preview-container">
+                  <img src={imagePreview} alt="Uploaded fridge" className="preview-image" />
+                </div>
                 <button onClick={handleReset} className="remove-image-btn">
                   ✕ Remove Image
                 </button>
               </div>
-            )}
-          </div>
 
-          <button
-            onClick={handleAnalyze}
-            disabled={!image || loading}
-            className="analyze-btn"
-          >
-            {loading ? (
-              <>
-                <span className="loading-spinner"></span>
-                Analyzing Fridge...
-              </>
-            ) : (
-              '🔍 Analyze Fridge'
-            )}
-          </button>
+              <div className="results-section">
+                <div className="tabs-container">
+                  <div className="tab-content">
+                    {activeTab === 'ingredients' && ingredients && (
+                      <div className="ingredients-card">
+                        <h2 className="section-title"> Detected Ingredients</h2>
+                        <p className="section-subtitle">Confidence scores from object detection model</p>
+                        <div className="ingredients-grid">
+                          {ingredients.map((ingredient, index) => (
+                            <div key={index} className="ingredient-tag">
+                              <span className="ingredient-name">{typeof ingredient === 'string' ? ingredient : ingredient.name}</span>
+                              {typeof ingredient === 'object' && (
+                                <span className="confidence-score">
+                                  {(ingredient.confidence * 100).toFixed(0)}%
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {activeTab === 'recipes' && recipes && recipes.length > 0 && (
+                      <div className="recipes-card">
+                        <h2 className="section-title"> <FaBowlFood />  Recommended Recipes</h2>
+                        <p className="section-subtitle">Personalized based on your preferences and available ingredients</p>
+                        <div className="recipes-list">
+                          {recipes.map((recipe, index) => (
+                            <div key={index} className="recipe-item">
+                              <div className="recipe-header">
+                                <h3 className="recipe-name">{recipe.name}</h3>
+                                {recipe.tags && (
+                                  <div className="recipe-tags">
+                                    {recipe.tags.map((tag, i) => (
+                                      <span key={i} className="recipe-tag">{tag}</span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                              <p className="recipe-description">{recipe.description}</p>
+                              <div className="recipe-meta">
+                                <span className="meta-item">⏱️ Prep: {recipe.prepTime}</span>
+                                <span className="meta-item">🔥 Cook: {recipe.cookTime}</span>
+                                {recipe.missingIngredients && recipe.missingIngredients.length > 0 && (
+                                  <span className="meta-item missing">
+                                    ⚠️ Missing: {recipe.missingIngredients.join(', ')}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {activeTab === 'missing' && missingIngredients && missingIngredients.length > 0 && (
+                      <div className="missing-ingredients-card">
+                        <h2 className="section-title"> Missing Ingredients</h2>
+                        <p className="section-subtitle">Ingredients needed for recommended recipes</p>
+                        <div className="missing-list">
+                          {missingIngredients.map((ingredient, index) => (
+                            <div key={index} className="missing-ingredient-tag">
+                              {ingredient}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {activeTab === 'shopping' && shoppingSuggestions && shoppingSuggestions.length > 0 && (
+                      <div className="shopping-card">
+                        <h2 className="section-title"> Eco-Friendly Shopping Suggestions</h2>
+                        <p className="section-subtitle">Stores ranked by sustainability score, carbon footprint, and local sourcing</p>
+                        <div className="shopping-suggestions">
+                          {shoppingSuggestions.map((suggestion, index) => (
+                            <div key={index} className="ingredient-shopping">
+                              <h3 className="shopping-ingredient-name">{suggestion.ingredient}</h3>
+                              <div className="stores-list">
+                                {suggestion.stores.map((store, storeIndex) => (
+                                  <div key={storeIndex} className="store-item">
+                                    <div className="store-header">
+                                      <div className="store-info">
+                                        <h4 className="store-name">{store.name}</h4>
+                                        <span className="store-distance">{store.distance}</span>
+                                      </div>
+                                      <div 
+                                        className="eco-score-badge"
+                                        style={{ backgroundColor: getEcoScoreColor(store.ecoScore) }}
+                                      >
+                                        <span className="eco-score-value">{store.ecoScore}</span>
+                                        <span className="eco-score-label">Eco Score</span>
+                                      </div>
+                                    </div>
+                                    <div className="store-details">
+                                      <div className="sustainability-badge">
+                                        <span className="sustainability-label">Sustainability:</span>
+                                        <span className="sustainability-value">{store.sustainability}</span>
+                                      </div>
+                                      <p className="store-rating">{store.rating}</p>
+                                      <div className="store-footer">
+                                        <span className="store-price">{store.price}</span>
+                                        <button className="store-action-btn">View Details</button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="tabs-nav">
+                    {availableTabs.map((tab) => (
+                      <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`tab-button ${activeTab === tab.id ? 'active' : ''}`}
+                        title={tab.label}
+                      >
+                        <span className="tab-icon">{tab.icon}</span>
+                        <span className="tab-label">{tab.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="upload-container">
+              <div className="image-wrapper">
+                <div className="image-preview-container">
+                  <img src={imagePreview} alt="Uploaded fridge" className="preview-image" />
+                </div>
+                <button onClick={handleReset} className="remove-image-btn">
+                  ✕ Remove Image
+                </button>
+              </div>
+            </div>
+          )}
+
+          {imagePreview && !(ingredients || recipes || shoppingSuggestions || missingIngredients) && (
+            <button
+              onClick={handleAnalyze}
+              disabled={!image || loading}
+              className="analyze-btn"
+            >
+              {loading ? (
+                <>
+                  <span className="loading-spinner"></span>
+                  Analyzing Fridge...
+                </>
+              ) : (
+                '🔍 Analyze Fridge'
+              )}
+            </button>
+          )}
 
           {error && <div className="error-message">{error}</div>}
         </div>
-
-        {(ingredients || recipes || shoppingSuggestions || missingIngredients) && availableTabs.length > 0 && (
-          <div className="results-section">
-            <div className="tabs-container">
-              <div className="tab-content">
-                {activeTab === 'ingredients' && ingredients && (
-                  <div className="ingredients-card">
-                    <h2 className="section-title">📋 Detected Ingredients</h2>
-                    <p className="section-subtitle">Confidence scores from object detection model</p>
-                    <div className="ingredients-grid">
-                      {ingredients.map((ingredient, index) => (
-                        <div key={index} className="ingredient-tag">
-                          <span className="ingredient-name">{typeof ingredient === 'string' ? ingredient : ingredient.name}</span>
-                          {typeof ingredient === 'object' && (
-                            <span className="confidence-score">
-                              {(ingredient.confidence * 100).toFixed(0)}%
-                            </span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === 'recipes' && recipes && recipes.length > 0 && (
-                  <div className="recipes-card">
-                    <h2 className="section-title">🍳 Recommended Recipes</h2>
-                    <p className="section-subtitle">Personalized based on your preferences and available ingredients</p>
-                    <div className="recipes-list">
-                      {recipes.map((recipe, index) => (
-                        <div key={index} className="recipe-item">
-                          <div className="recipe-header">
-                            <h3 className="recipe-name">{recipe.name}</h3>
-                            {recipe.tags && (
-                              <div className="recipe-tags">
-                                {recipe.tags.map((tag, i) => (
-                                  <span key={i} className="recipe-tag">{tag}</span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          <p className="recipe-description">{recipe.description}</p>
-                          <div className="recipe-meta">
-                            <span className="meta-item">⏱️ Prep: {recipe.prepTime}</span>
-                            <span className="meta-item">🔥 Cook: {recipe.cookTime}</span>
-                            {recipe.missingIngredients && recipe.missingIngredients.length > 0 && (
-                              <span className="meta-item missing">
-                                ⚠️ Missing: {recipe.missingIngredients.join(', ')}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === 'missing' && missingIngredients && missingIngredients.length > 0 && (
-                  <div className="missing-ingredients-card">
-                    <h2 className="section-title">🛒 Missing Ingredients</h2>
-                    <p className="section-subtitle">Ingredients needed for recommended recipes</p>
-                    <div className="missing-list">
-                      {missingIngredients.map((ingredient, index) => (
-                        <div key={index} className="missing-ingredient-tag">
-                          {ingredient}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === 'shopping' && shoppingSuggestions && shoppingSuggestions.length > 0 && (
-                  <div className="shopping-card">
-                    <h2 className="section-title">🌍 Eco-Friendly Shopping Suggestions</h2>
-                    <p className="section-subtitle">Stores ranked by sustainability score, carbon footprint, and local sourcing</p>
-                    <div className="shopping-suggestions">
-                      {shoppingSuggestions.map((suggestion, index) => (
-                        <div key={index} className="ingredient-shopping">
-                          <h3 className="shopping-ingredient-name">{suggestion.ingredient}</h3>
-                          <div className="stores-list">
-                            {suggestion.stores.map((store, storeIndex) => (
-                              <div key={storeIndex} className="store-item">
-                                <div className="store-header">
-                                  <div className="store-info">
-                                    <h4 className="store-name">{store.name}</h4>
-                                    <span className="store-distance">{store.distance}</span>
-                                  </div>
-                                  <div 
-                                    className="eco-score-badge"
-                                    style={{ backgroundColor: getEcoScoreColor(store.ecoScore) }}
-                                  >
-                                    <span className="eco-score-value">{store.ecoScore}</span>
-                                    <span className="eco-score-label">Eco Score</span>
-                                  </div>
-                                </div>
-                                <div className="store-details">
-                                  <div className="sustainability-badge">
-                                    <span className="sustainability-label">Sustainability:</span>
-                                    <span className="sustainability-value">{store.sustainability}</span>
-                                  </div>
-                                  <p className="store-rating">{store.rating}</p>
-                                  <div className="store-footer">
-                                    <span className="store-price">{store.price}</span>
-                                    <button className="store-action-btn">View Details</button>
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="tabs-nav">
-                {availableTabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`tab-button ${activeTab === tab.id ? 'active' : ''}`}
-                    title={tab.label}
-                  >
-                    <span className="tab-icon">{tab.icon}</span>
-                    <span className="tab-label">{tab.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
       </main>
 
       <footer className="footer">

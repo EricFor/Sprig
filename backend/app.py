@@ -13,6 +13,10 @@ import numpy as np
 from openai import OpenAI
 import re
 from inflect import engine
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes

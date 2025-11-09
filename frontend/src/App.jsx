@@ -17,6 +17,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('ingredients')
   const [dietSearchQuery, setDietSearchQuery] = useState('')
   const [cuisineSearchQuery, setCuisineSearchQuery] = useState('')
+  const [newIngredient, setNewIngredient] = useState('')
   
   // User diet preferences
   const [preferences, setPreferences] = useState({
@@ -299,6 +300,100 @@ function App() {
     setSelectedCuisines([])
     setDietSearchQuery('')
     setCuisineSearchQuery('')
+    setNewIngredient('')
+  }
+
+  const handleAddIngredient = () => {
+    if (newIngredient.trim() && ingredients) {
+      const ingredientName = newIngredient.trim()
+      // Check if ingredient already exists
+      const existingNames = ingredients.map(ing => 
+        typeof ing === 'string' ? ing.toLowerCase() : ing.name.toLowerCase()
+      )
+      if (!existingNames.includes(ingredientName.toLowerCase())) {
+        // Add new ingredient marked as user-inputted
+        const newIng = {
+          name: ingredientName,
+          userInputted: true // Flag to identify user-added ingredients
+        }
+        setIngredients([...ingredients, newIng])
+        setNewIngredient('')
+      } else {
+        setError('Ingredient already exists')
+        setTimeout(() => setError(null), 2000)
+      }
+    }
+  }
+
+  const handleRemoveIngredient = (index) => {
+    const updatedIngredients = ingredients.filter((_, i) => i !== index)
+    setIngredients(updatedIngredients)
+  }
+
+  const handleRecalibrate = async () => {
+    if (!ingredients || ingredients.length === 0) {
+      setError('Please add at least one ingredient')
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+    setRecipes(null)
+    setMissingIngredients(null)
+    setShoppingSuggestions(null)
+
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+      
+      // Prepare ingredient names
+      const ingredientNames = ingredients.map(ing => 
+        typeof ing === 'string' ? ing : ing.name
+      )
+
+      // Call the recalibrate endpoint
+      const response = await fetch(`${apiUrl}/api/recalibrate-recipes`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ingredients: ingredientNames,
+          preferences: {
+            ...preferences,
+            cuisineRegions: selectedCuisines
+          }
+        })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+        throw new Error(errorData.error || `Server error: ${response.status}`)
+      }
+
+      const data = await response.json()
+
+      // Update state with new recipes
+      setRecipes(data.recipes || [])
+      setMissingIngredients(data.missingIngredients || [])
+      setShoppingSuggestions(data.shoppingSuggestions || [])
+      
+      // Switch to recipes tab
+      if (data.recipes && data.recipes.length > 0) {
+        setActiveTab('recipes')
+      }
+
+    } catch (err) {
+      console.error('Error recalibrating recipes:', err)
+      setError(err.message || 'Failed to generate recipes. Please make sure the backend server is running.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleIngredientKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      handleAddIngredient()
+    }
   }
 
   const getEcoScoreColor = (score) => {
@@ -456,17 +551,69 @@ function App() {
                       <div className="ingredients-card">
                         <h2 className="section-title"> Detected Ingredients</h2>
                         <p className="section-subtitle">Confidence scores from object detection model</p>
+                        
+                        {/* Add Ingredient Input */}
+                        <div className="add-ingredient-section">
+                          <div className="add-ingredient-input-container">
+                            <input
+                              type="text"
+                              placeholder="Add ingredient manually..."
+                              value={newIngredient}
+                              onChange={(e) => setNewIngredient(e.target.value)}
+                              onKeyPress={handleIngredientKeyPress}
+                              className="add-ingredient-input"
+                            />
+                            <button 
+                              onClick={handleAddIngredient}
+                              className="add-ingredient-btn"
+                              disabled={!newIngredient.trim()}
+                            >
+                              + Add
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Ingredients Grid */}
                         <div className="ingredients-grid">
-                          {ingredients.map((ingredient, index) => (
-                            <div key={index} className="ingredient-tag">
-                              <span className="ingredient-name">{typeof ingredient === 'string' ? ingredient : ingredient.name}</span>
-                              {typeof ingredient === 'object' && (
-                                <span className="confidence-score">
-                                  {(ingredient.confidence * 100).toFixed(0)}%
-                                </span>
-                              )}
-                            </div>
-                          ))}
+                          {ingredients.map((ingredient, index) => {
+                            const ingName = typeof ingredient === 'string' ? ingredient : ingredient.name
+                            const isUserInputted = typeof ingredient === 'object' && ingredient.userInputted
+                            const hasConfidence = typeof ingredient === 'object' && ingredient.confidence && !isUserInputted
+                            
+                            return (
+                              <div key={index} className="ingredient-tag">
+                                <span className="ingredient-name">{ingName}</span>
+                                {isUserInputted && (
+                                  <span className="user-inputted-tag">
+                                    User Inputted
+                                  </span>
+                                )}
+                                {hasConfidence && (
+                                  <span className="confidence-score">
+                                    {(ingredient.confidence * 100).toFixed(0)}%
+                                  </span>
+                                )}
+                                <button
+                                  onClick={() => handleRemoveIngredient(index)}
+                                  className="remove-ingredient-btn"
+                                  title="Remove ingredient"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            )
+                          })}
+                        </div>
+
+                        {/* Recalibrate Button */}
+                        <div className="recalibrate-section">
+                          <button 
+                            onClick={handleRecalibrate}
+                            className="recalibrate-btn"
+                            disabled={loading || !ingredients || ingredients.length === 0}
+                          >
+                            {loading ? 'Generating...' : '🔄 Recalibrate Recipes'}
+                          </button>
                         </div>
                       </div>
                     )}

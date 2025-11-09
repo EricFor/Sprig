@@ -511,6 +511,65 @@ def classify_fridge():
         return jsonify({"error": f"Failed to classify image: {str(e)}"}), 500
 
 # Keep the old endpoint for backward compatibility, but route to new system
+@app.route('/api/recalibrate-recipes', methods=['POST'])
+def recalibrate_recipes():
+    """
+    Generate recipes from existing ingredients list (without image).
+    Accepts JSON with ingredients list and preferences.
+    """
+    try:
+        # Get JSON data
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        # Get ingredients list
+        ingredients_list = data.get('ingredients', [])
+        if not ingredients_list:
+            return jsonify({"error": "No ingredients provided"}), 400
+        
+        # Get preferences
+        preferences = data.get('preferences', {})
+        
+        # Convert ingredient names to ingredient objects with confidence
+        ingredients = []
+        for ing_name in ingredients_list:
+            if isinstance(ing_name, str):
+                ingredients.append({
+                    "name": ing_name,
+                    "confidence": 0.95  # Default confidence for user-provided ingredients
+                })
+            else:
+                ingredients.append(ing_name)
+        
+        # Generate recipes using Gemini
+        recipes = generate_recipes(ingredients, preferences)
+        
+        # Extract missing ingredients
+        detected_ingredient_names = [ing['name'].lower() if isinstance(ing, dict) else ing.lower() for ing in ingredients_list]
+        missing_ingredients = []
+        for recipe in recipes:
+            for missing in recipe.get('missingIngredients', []):
+                if missing not in missing_ingredients:
+                    missing_ingredients.append(missing)
+        
+        # Generate shopping suggestions
+        shopping_suggestions = generate_shopping_suggestions(missing_ingredients)
+        
+        return jsonify({
+            "ingredients": ingredients,
+            "recipes": recipes,
+            "missingIngredients": missing_ingredients,
+            "shoppingSuggestions": shopping_suggestions
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in recalibrate_recipes: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Failed to generate recipes: {str(e)}"}), 500
+
 @app.route('/api/analyze-fridge', methods=['POST'])
 def analyze_fridge():
     """

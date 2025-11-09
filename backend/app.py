@@ -28,16 +28,22 @@ CORS(app)  # Enable CORS for all routes
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize OpenAI client
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    raise ValueError("OPENAI_API_KEY environment variable is required")
+# Initialize Dedalus Labs API client 
+DEDALUS_API_KEY = os.getenv("DEDALUS_API_KEY")
+DEDALUS_BASE_URL = os.getenv("DEDALUS_BASE_URL", "https://api.dedaluslabs.ai/v1")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+if not DEDALUS_API_KEY:
+    raise ValueError("DEDALUS_API_KEY environment variable is required. Get your API key from Dedalus Labs.")
 
-# Model configuration
-PRIMARY_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
-FALLBACK_MODEL = os.getenv("OPENAI_MODEL_FALLBACK", "gpt-4o-mini")
+# Initialize OpenAI-compatible client with Dedalus Labs endpoint
+client = OpenAI(
+    api_key=DEDALUS_API_KEY,
+    base_url=DEDALUS_BASE_URL
+)
+
+# Model configuration (Dedalus Labs model names)
+PRIMARY_MODEL = os.getenv("DEDALUS_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o"))
+FALLBACK_MODEL = os.getenv("DEDALUS_MODEL_FALLBACK", os.getenv("OPENAI_MODEL_FALLBACK", "gpt-4o-mini"))
 USE_FALLBACK = os.getenv("USE_FALLBACK_MODEL", "false").lower() == "true"
 
 # Default confidence threshold
@@ -174,7 +180,7 @@ def image_to_base64(image_pil: Image.Image, format: str = "JPEG") -> str:
 
 def classify_image_with_openai(image_base64: str, model: str = PRIMARY_MODEL) -> Dict[str, Any]:
     """
-    Classify fridge image using OpenAI Vision API.
+    Classify fridge image using Dedalus Labs API 
     """
     system_message = """You are an expert at identifying food ingredients in refrigerator images.
 
@@ -269,7 +275,7 @@ Include only ingredients you can identify with high confidence (≥0.90)."""
         return result
     
     except Exception as e:
-        logger.error(f"OpenAI API error: {str(e)}")
+        logger.error(f"Dedalus Labs API error: {str(e)}")
         raise
 
 def normalize_ingredient_name(name: str) -> str:
@@ -435,7 +441,7 @@ def health():
 @app.route('/classify-fridge', methods=['POST'])
 def classify_fridge():
     """
-    Classify fridge image(s) using OpenAI Vision API.
+    Classify fridge image(s) using Dedalus Labs API 
     
     Accepts:
     - One or more images (files with key 'images' or 'image')
@@ -509,7 +515,7 @@ def classify_fridge():
                 # Convert to base64
                 image_base64 = image_to_base64(image_pil)
                 
-                # Classify with OpenAI
+                # Classify with Dedalus Labs API
                 result = classify_image_with_openai(image_base64, model=model)
                 
                 # Extract ingredients and notes
@@ -555,8 +561,10 @@ def classify_fridge():
         total_time = time.time() - start_time
         diagnostics["total_processing_time"] = total_time
         diagnostics["ingredients_returned"] = len(final_ingredients)
+        diagnostics["api_provider"] = "Dedalus Labs"
+        diagnostics["base_url"] = DEDALUS_BASE_URL
         
-        logger.info(f"Classification complete: {len(final_ingredients)} ingredients in {total_time:.2f}s")
+        logger.info(f"Classification complete via Dedalus Labs: {len(final_ingredients)} ingredients in {total_time:.2f}s")
         
         response = {
             "ingredients": final_ingredients,
@@ -610,7 +618,7 @@ def analyze_fridge():
         image_pil = optimize_image_size(image_pil, max_dimension=1024)
         image_base64 = image_to_base64(image_pil)
         
-        # Classify
+        # Classify using Dedalus Labs API
         model = FALLBACK_MODEL if USE_FALLBACK else PRIMARY_MODEL
         result = classify_image_with_openai(image_base64, model=model)
         raw_ingredients = result.get("ingredients", [])

@@ -722,7 +722,7 @@ PRIORITIZE recipes that can be made with the available ingredients with minimal 
                 recipes = [recipes]
             
             logger.info(f"Successfully generated {len(recipes)} recipes")
-            return recipes[:4]  # Limit to 4 recipes
+            return recipes[:10]  # Limit to 10 recipes
             
         except Exception as recipe_error:
             logger.error(f"Error generating recipes with Gemini: {str(recipe_error)}")

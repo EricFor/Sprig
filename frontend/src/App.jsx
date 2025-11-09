@@ -25,16 +25,86 @@ function App() {
     dairyFree: false
   })
 
-  const handleImageUpload = (e) => {
+  // Resize image to ~1024px longest edge to reduce token cost
+  const resizeImage = (file, maxDimension = 1024) => {
+    return new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        const img = new Image()
+        img.onload = () => {
+          const canvas = document.createElement('canvas')
+          let width = img.width
+          let height = img.height
+          
+          // Calculate new dimensions
+          if (width > height) {
+            if (width > maxDimension) {
+              height = (height * maxDimension) / width
+              width = maxDimension
+            }
+          } else {
+            if (height > maxDimension) {
+              width = (width * maxDimension) / height
+              height = maxDimension
+            }
+          }
+          
+          canvas.width = width
+          canvas.height = height
+          
+          const ctx = canvas.getContext('2d')
+          ctx.drawImage(img, 0, 0, width, height)
+          
+          canvas.toBlob((blob) => {
+            const resizedFile = new File([blob], file.name, {
+              type: 'image/jpeg',
+              lastModified: Date.now()
+            })
+            resolve(resizedFile)
+          }, 'image/jpeg', 0.9)
+        }
+        img.src = e.target.result
+      }
+      reader.readAsDataURL(file)
+    })
+  }
+
+  const handleImageUpload = async (e) => {
     const file = e.target.files[0]
     if (file) {
       setError(null)
-      setImage(file)
-      const reader = new FileReader()
-      reader.onloadend = () => {
-        setImagePreview(reader.result)
+      
+      // Validate minimum size (320px)
+      const img = new Image()
+      const url = URL.createObjectURL(file)
+      img.onload = async () => {
+        URL.revokeObjectURL(url)
+        
+        if (img.width < 320 || img.height < 320) {
+          setError('Image resolution too low. Please use at least 320x320 pixels.')
+          return
+        }
+        
+        // Resize image to ~1024px longest edge
+        try {
+          const resizedFile = await resizeImage(file, 1024)
+          setImage(resizedFile)
+          
+          const reader = new FileReader()
+          reader.onloadend = () => {
+            setImagePreview(reader.result)
+          }
+          reader.readAsDataURL(resizedFile)
+        } catch (err) {
+          console.error('Error resizing image:', err)
+          setError('Failed to process image. Please try again.')
+        }
       }
-      reader.readAsDataURL(file)
+      img.onerror = () => {
+        URL.revokeObjectURL(url)
+        setError('Invalid image file. Please upload a valid image.')
+      }
+      img.src = url
     }
   }
 

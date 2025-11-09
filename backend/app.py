@@ -184,7 +184,7 @@ def classify_image_with_openai(image_base64: str, model: str = PRIMARY_MODEL) ->
     """
     system_message = """You are an expert at identifying food ingredients in refrigerator images.
 
-Your task is to identify ONLY actual food ingredients, not containers, packaging, or utensils.
+Your task is to identify ONLY actual food ingredients, packaging, or utensils.
 
 Rules:
 1. Return ONLY a valid JSON object with this exact structure:
@@ -197,9 +197,9 @@ Rules:
 
 2. Exclude:
    - Brand names (e.g., "Coca-Cola", "Heinz")
-   - Containers, bags, packaging, utensils
+   - bags, packaging, utensils
    - Vague labels like "food", "stuff", "things"
-   - Any item you are less than 90% confident about
+   - Any item you are less than 75% confident about
 
 3. Only include ingredients you can clearly identify with high confidence (≥0.90).
 
@@ -207,14 +207,14 @@ Rules:
 
 5. Return ingredients as singular nouns when possible (e.g., "egg" not "eggs", "tomato" not "tomatoes").
 
-6. Do not include confidence scores below 0.90.
+6. Do not include confidence scores below 0.75.
 
 7. Return ONLY valid JSON, no markdown, no code blocks, no explanations outside the JSON structure."""
 
     user_message = """Analyze this refrigerator image and identify all visible food ingredients.
 
 Return ONLY a JSON object with the structure specified in the system message.
-Include only ingredients you can identify with high confidence (≥0.90)."""
+Include only ingredients you can identify with high confidence (≥0.75)."""
 
     try:
         # Note: response_format may not be supported for vision models in all cases

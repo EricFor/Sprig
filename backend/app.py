@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 import base64
 import io
@@ -119,12 +119,15 @@ def optimize_image_size(image_pil: Image.Image, max_dimension: int = 1024) -> Im
     
     return image_pil
 
-def image_to_base64(image_pil: Image.Image, format: str = "JPEG") -> str:
+def image_to_base64(image_pil: Image.Image, format: str = "JPEG", quality: int = 90) -> str:
     """
     Convert PIL Image to base64 string for API.
+    Saves as JPEG with quality 85-92% (default 90%) for optimal file size/quality balance.
     """
     buffer = io.BytesIO()
-    image_pil.save(buffer, format=format)
+    # Save with optimized quality (85-92% range)
+    quality = max(85, min(92, quality))
+    image_pil.save(buffer, format=format, quality=quality, optimize=True)
     image_bytes = buffer.getvalue()
     return base64.b64encode(image_bytes).decode('utf-8')
 
@@ -570,75 +573,128 @@ def recalibrate_recipes():
         traceback.print_exc()
         return jsonify({"error": f"Failed to generate recipes: {str(e)}"}), 500
 
+def emit_progress(progress_callback, progress: int, message: str):
+    """Helper function to emit progress updates"""
+    progress_data = {
+        "progress": progress,
+        "message": message
+    }
+    progress_callback(progress_data)
+
 @app.route('/api/analyze-fridge', methods=['POST'])
 def analyze_fridge():
     """
-    Legacy endpoint - analyzes fridge and generates recipes.
-    Uses new classification system but maintains old API contract.
+    Analyzes fridge and generates recipes with progress updates.
+    Uses Server-Sent Events (SSE) to stream progress updates.
     """
-    try:
-        # Get preferences if provided
-        preferences = {}
-        if 'preferences' in request.form:
-            preferences = json.loads(request.form['preferences'])
-        
-        # Use new classification endpoint logic
-        min_conf = float(request.form.get('min_conf', 0.50))  # Lower threshold for legacy endpoint
-        
-        # Get image
-        if 'image' not in request.files:
-            return jsonify({"error": "No image provided"}), 400
-        
-        image_file = request.files['image']
-        if image_file.filename == '':
-            return jsonify({"error": "No image selected"}), 400
-        
-        # Process image through new classification system
-        image_bytes = image_file.read()
-        image_pil = Image.open(io.BytesIO(image_bytes))
-        
-        # Validate and optimize
-        is_valid, error_msg = validate_image_quality(image_pil)
-        if not is_valid:
-            return jsonify({"error": error_msg}), 400
-        
-        image_pil = optimize_image_size(image_pil, max_dimension=1024)
-        image_base64 = image_to_base64(image_pil)
-        
-        # Classify using Dedalus Labs API
-        model = FALLBACK_MODEL if USE_FALLBACK else PRIMARY_MODEL
-        result = classify_image_with_openai(image_base64, model=model)
-        raw_ingredients = result.get("ingredients", [])
-        
-        # Post-process
-        ingredients = post_process_ingredients(raw_ingredients, min_confidence=min_conf)
-        
-        # Generate recipes using Gemini (keep existing recipe generation)
-        recipes = generate_recipes(ingredients, preferences)
-        
-        # Extract missing ingredients
-        detected_ingredient_names = [ing['name'].lower() for ing in ingredients]
-        missing_ingredients = []
-        for recipe in recipes:
-            for missing in recipe.get('missingIngredients', []):
-                if missing not in missing_ingredients:
-                    missing_ingredients.append(missing)
-        
-        # Generate shopping suggestions
-        shopping_suggestions = generate_shopping_suggestions(missing_ingredients)
-        
-        return jsonify({
-            "ingredients": ingredients,
-            "recipes": recipes,
-            "missingIngredients": missing_ingredients,
-            "shoppingSuggestions": shopping_suggestions
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error in analyze_fridge: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": f"Failed to analyze image: {str(e)}"}), 500
+    def generate():
+        try:
+            # Get preferences if provided
+            preferences = {}
+            if 'preferences' in request.form:
+                preferences = json.loads(request.form['preferences'])
+            
+            # Use new classification endpoint logic
+            min_conf = float(request.form.get('min_conf', 0.50))
+            
+            # Get image
+            if 'image' not in request.files:
+                yield f"data: {json.dumps({'error': 'No image provided', 'progress': 0})}\n\n"
+                return
+            
+            image_file = request.files['image']
+            if image_file.filename == '':
+                yield f"data: {json.dumps({'error': 'No image selected', 'progress': 0})}\n\n"
+                return
+            
+            # Progress: 5% - Reading image
+            yield f"data: {json.dumps({'progress': 5, 'message': 'Reading image...'})}\n\n"
+            time.sleep(0.1)  # Small delay for UI update
+            
+            # Process image through new classification system
+            image_bytes = image_file.read()
+            image_pil = Image.open(io.BytesIO(image_bytes))
+            
+            # Progress: 10% - Validating image quality
+            yield f"data: {json.dumps({'progress': 10, 'message': 'Validating image quality...'})}\n\n"
+            time.sleep(0.1)
+            
+            # Validate and optimize
+            is_valid, error_msg = validate_image_quality(image_pil)
+            if not is_valid:
+                yield f"data: {json.dumps({'error': error_msg, 'progress': 0})}\n\n"
+                return
+            
+            # Progress: 20% - Optimizing image
+            yield f"data: {json.dumps({'progress': 20, 'message': 'Optimizing image for analysis...'})}\n\n"
+            time.sleep(0.1)
+            
+            image_pil = optimize_image_size(image_pil, max_dimension=1024)
+            image_base64 = image_to_base64(image_pil, quality=90)
+            
+            # Progress: 30% - Analyzing image with AI
+            yield f"data: {json.dumps({'progress': 30, 'message': 'Analyzing image with AI vision model...'})}\n\n"
+            time.sleep(0.1)
+            
+            # Classify using Dedalus Labs API
+            model = FALLBACK_MODEL if USE_FALLBACK else PRIMARY_MODEL
+            result = classify_image_with_openai(image_base64, model=model)
+            raw_ingredients = result.get("ingredients", [])
+            
+            # Progress: 60% - Processing ingredients
+            yield f"data: {json.dumps({'progress': 60, 'message': f'Processing {len(raw_ingredients)} detected ingredients...'})}\n\n"
+            time.sleep(0.1)
+            
+            # Post-process
+            ingredients = post_process_ingredients(raw_ingredients, min_confidence=min_conf)
+            
+            # Progress: 70% - Generating recipes
+            yield f"data: {json.dumps({'progress': 70, 'message': 'Generating personalized recipes...'})}\n\n"
+            time.sleep(0.1)
+            
+            # Generate recipes using Gemini (keep existing recipe generation)
+            recipes = generate_recipes(ingredients, preferences)
+            
+            # Progress: 85% - Processing recipes
+            yield f"data: {json.dumps({'progress': 85, 'message': f'Processing {len(recipes)} recipe recommendations...'})}\n\n"
+            time.sleep(0.1)
+            
+            # Extract missing ingredients
+            detected_ingredient_names = [ing['name'].lower() for ing in ingredients]
+            missing_ingredients = []
+            for recipe in recipes:
+                for missing in recipe.get('missingIngredients', []):
+                    if missing not in missing_ingredients:
+                        missing_ingredients.append(missing)
+            
+            # Progress: 90% - Generating shopping suggestions
+            yield f"data: {json.dumps({'progress': 90, 'message': 'Generating shopping suggestions...'})}\n\n"
+            time.sleep(0.1)
+            
+            # Generate shopping suggestions
+            shopping_suggestions = generate_shopping_suggestions(missing_ingredients)
+            
+            # Progress: 100% - Complete
+            yield f"data: {json.dumps({'progress': 100, 'message': 'Analysis complete!'})}\n\n"
+            time.sleep(0.1)
+            
+            # Send final results
+            result_data = {
+                "ingredients": ingredients,
+                "recipes": recipes,
+                "missingIngredients": missing_ingredients,
+                "shoppingSuggestions": shopping_suggestions,
+                "complete": True
+            }
+            yield f"data: {json.dumps(result_data)}\n\n"
+            
+        except Exception as e:
+            logger.error(f"Error in analyze_fridge: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'error': f'Failed to analyze image: {str(e)}', 'progress': 0})}\n\n"
+    
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
 def generate_recipes(ingredients, preferences):
     """

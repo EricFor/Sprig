@@ -18,6 +18,8 @@ function App() {
   const [dietSearchQuery, setDietSearchQuery] = useState('')
   const [cuisineSearchQuery, setCuisineSearchQuery] = useState('')
   const [newIngredient, setNewIngredient] = useState('')
+  const [progress, setProgress] = useState(0)
+  const [progressMessage, setProgressMessage] = useState('')
   
   // User diet preferences
   const [preferences, setPreferences] = useState({
@@ -236,6 +238,8 @@ function App() {
 
     setLoading(true)
     setError(null)
+    setProgress(0)
+    setProgressMessage('Starting analysis...')
     setIngredients(null)
     setMissingIngredients(null)
     setRecipes(null)
@@ -254,35 +258,71 @@ function App() {
       // Get API URL from environment or use default
       const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000'
       
-      // Call the backend API
+      // Call the backend API with streaming support
       const response = await fetch(`${apiUrl}/api/analyze-fridge`, {
         method: 'POST',
         body: formData
       })
       
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
-        throw new Error(errorData.error || `Server error: ${response.status}`)
+        throw new Error(`Server error: ${response.status}`)
       }
-      
-      const data = await response.json()
-      
-      // Log the response for debugging
-      console.log('API Response:', data)
-      console.log('Ingredients:', data.ingredients)
-      console.log('Recipes:', data.recipes)
-      console.log('Missing Ingredients:', data.missingIngredients)
-      console.log('Shopping Suggestions:', data.shoppingSuggestions)
-      
-      // Update state with API response
-      setIngredients(data.ingredients || [])
-      setRecipes(data.recipes || [])
-      setMissingIngredients(data.missingIngredients || [])
-      setShoppingSuggestions(data.shoppingSuggestions || [])
+
+      // Read the stream
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        
+        if (done) {
+          break
+        }
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || '' // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              
+              // Handle progress updates
+              if (data.progress !== undefined) {
+                setProgress(data.progress)
+                if (data.message) {
+                  setProgressMessage(data.message)
+                }
+              }
+              
+              // Handle errors
+              if (data.error) {
+                throw new Error(data.error)
+              }
+              
+              // Handle final results
+              if (data.complete && data.ingredients) {
+                setIngredients(data.ingredients || [])
+                setRecipes(data.recipes || [])
+                setMissingIngredients(data.missingIngredients || [])
+                setShoppingSuggestions(data.shoppingSuggestions || [])
+                setProgress(100)
+                setProgressMessage('Analysis complete!')
+              }
+            } catch (parseError) {
+              console.error('Error parsing SSE data:', parseError, line)
+            }
+          }
+        }
+      }
       
     } catch (err) {
       console.error('Error analyzing fridge:', err)
       setError(err.message || 'Failed to analyze image. Please make sure the backend server is running.')
+      setProgress(0)
+      setProgressMessage('')
     } finally {
       setLoading(false)
     }
@@ -297,6 +337,8 @@ function App() {
     setShoppingSuggestions(null)
     setError(null)
     setLoading(false)
+    setProgress(0)
+    setProgressMessage('')
     setSelectedCuisines([])
     setDietSearchQuery('')
     setCuisineSearchQuery('')
@@ -745,20 +787,37 @@ function App() {
           )}
 
           {imagePreview && !(ingredients || recipes || shoppingSuggestions) && (
-            <button
-              onClick={handleAnalyze}
-              disabled={!image || loading}
-              className="analyze-btn"
-            >
-              {loading ? (
-                <>
-                  <span className="loading-spinner"></span>
-                  Analyzing Fridge...
-                </>
-              ) : (
-                '🔍 Analyze Fridge'
+            <>
+              <button
+                onClick={handleAnalyze}
+                disabled={!image || loading}
+                className="analyze-btn"
+              >
+                {loading ? (
+                  <>
+                    <span className="loading-spinner"></span>
+                    Analyzing Fridge...
+                  </>
+                ) : (
+                  '🔍 Analyze Fridge'
+                )}
+              </button>
+              
+              {loading && (
+                <div className="progress-bar-container">
+                  <div className="progress-bar">
+                    <div 
+                      className="progress-bar-fill" 
+                      style={{ width: `${progress}%` }}
+                    ></div>
+                  </div>
+                  <p className="progress-text">
+                    {progressMessage || 'Processing image and generating recipes...'}
+                  </p>
+                  <p className="progress-percentage">{progress}%</p>
+                </div>
               )}
-            </button>
+            </>
           )}
 
           {error && <div className="error-message">{error}</div>}

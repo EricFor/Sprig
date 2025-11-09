@@ -1,25 +1,26 @@
-# Sprig
+# EcoMarket
 
-Intelligent Recipe Recommendation from Fridge Image Scanning using OpenAI Vision and Google Gemini AI.
+Intelligent Recipe Recommendation from Fridge Image Scanning using OpenAI Vision and Google Gemini AI, with Eco-Friendly Shopping Suggestions.
 
 ## Overview
 
-Sprig is a full-stack application that:
+EcoMarket is a full-stack application that:
 - Analyzes fridge images using OpenAI Vision (via Dedalus Labs API)
 - Detects ingredients in your refrigerator automatically with high confidence
 - Enhances images for better recognition accuracy
 - Recommends personalized recipes based on available ingredients
 - Supports manual ingredient addition and removal
 - Provides recipe recalibration based on updated ingredient lists
-- Suggests eco-friendly shopping options for missing ingredients
+- Suggests eco-friendly shopping options for missing ingredients with detailed environmental impact information
 - Real-time progress tracking during analysis
-
+  
 ## Tech Stack
 
 - **Frontend**: React 19 + Vite
 - **Backend**: Flask (Python 3.8+)
-- **AI Vision Model**: OpenAI GPT-4o / GPT-4o-mini (via Dedalus Labs API)
+- **AI Vision Model**: OpenAI GPT-4o / GPT-5 (via Dedalus Labs API)
 - **Recipe Generation**: Google Gemini AI
+- **Shopping Suggestions**: Google Gemini AI (brands, eco-scores, prices, environmental impact)
 - **Image Processing**: OpenCV, Pillow
 - **Real-time Updates**: Server-Sent Events (SSE)
 
@@ -36,6 +37,8 @@ EcoMarket/
 │   └── index.html        # HTML entry point
 ├── backend/               # Flask backend API
 │   ├── app.py            # Main Flask application
+│   ├── utils/
+│   │   └── dedalus_utils.py  # Dedalus Labs API utilities
 │   ├── requirements.txt  # Python dependencies
 │   └── .env              # Environment variables (create this)
 └── README.md             # This file
@@ -55,21 +58,26 @@ EcoMarket/
 - Manual ingredient addition
 - Ingredient removal
 - Confidence scores for detected ingredients
-- User-inputted ingredient tagging
+- User-inputted ingredient tagging (no confidence score)
 
 ### Recipe Generation
 - Personalized recipe recommendations
 - Recipe recalibration based on updated ingredients
-- Dietary preference support (vegan, vegetarian, halal, kosher, etc.)
-- Cuisine region preferences
+- Dietary preference support (vegan, vegetarian, halal, kosher, spicy, low-carb, gluten-free, dairy-free)
+- Cuisine region preferences (Asian, American, African, European, Middle Eastern, Oceanian)
 - Recipe details including prep time, cook time, and tags
 - Missing ingredient identification
+- Web search integration for recipe URLs
 
-### Shopping Suggestions
-- Eco-friendly store recommendations
-- Sustainability scores
-- Distance and pricing information
-- Multiple store options per ingredient
+### Eco-Friendly Shopping Suggestions
+- Brand recommendations for missing ingredients
+- Environmental impact scores (0-100) for each brand
+- Detailed environmental impact descriptions
+- ECO score reasoning explanations
+- Price information for each brand
+- Tabbed "View More" interface for environmental details
+- Sustainability labels (Excellent, Very Good, Good, Fair, Poor)
+- Multiple brand options per ingredient
 
 ## Quick Start
 
@@ -165,8 +173,10 @@ Before you begin, ensure you have the following installed:
    - **Ingredients Tab**: See detected ingredients with confidence scores
    - Add or remove ingredients manually
    - Recalibrate recipes based on updated ingredients
-   - **Recipes Tab**: Browse personalized recipe recommendations
+   - **Recipes Tab**: Browse personalized recipe recommendations with "View Details" buttons for recipe URLs
    - **Shopping Tab**: Find eco-friendly shopping options for missing ingredients
+     - Click "View More" on any brand to see detailed environmental impact and ECO score reasoning
+     - Use tabs to switch between Environmental Impact and ECO Score Reasoning
 
 ## API Documentation
 
@@ -226,7 +236,8 @@ Final result event:
       "cookTime": "20 min",
       "availableIngredients": ["Tomato", "Onion"],
       "missingIngredients": ["Olive Oil"],
-      "tags": ["high-protein", "gluten-free"]
+      "tags": ["high-protein", "gluten-free"],
+      "url": "https://example.com/recipe/chicken-stir-fry"
     }
   ],
   "missingIngredients": ["Olive Oil"],
@@ -235,12 +246,14 @@ Final result event:
       "ingredient": "Olive Oil",
       "stores": [
         {
-          "name": "Local Farmers Market",
-          "distance": "0.5 mi",
-          "ecoScore": 95,
+          "name": "Brand Name",
+          "distance": "Online",
+          "ecoScore": 85,
           "sustainability": "Excellent",
-          "rating": "Local sourcing, zero-waste packaging",
-          "price": "$8.99"
+          "rating": "Eco score: 85/100",
+          "price": "$12.99",
+          "environmentalImpact": "This brand uses sustainable sourcing practices...",
+          "reasoning": "Received a high score due to strong environmental initiatives..."
         }
       ]
     }
@@ -354,7 +367,7 @@ Create a `.env` file in the `frontend` directory (optional):
 ### OpenAI Vision (via Dedalus Labs)
 
 This project uses OpenAI Vision models through the Dedalus Labs API:
-- **Primary Model**: `gpt-4o`
+- **Primary Model**: `gpt-4o` or `gpt-5`
 - **Fallback Model**: `gpt-4o-mini`
 - **Purpose**: Detects food ingredients in refrigerator images with high confidence
 - **Features**:
@@ -363,21 +376,13 @@ This project uses OpenAI Vision models through the Dedalus Labs API:
   - Exclusion of non-food items (containers, packaging, utensils)
   - Brand name filtering
 
-### Image Enhancement Pipeline
-
-Images are automatically enhanced before analysis to improve recognition accuracy:
-- Auto white balance correction (fixes fridge LED lighting tints)
-- Mild brightness and contrast adjustment
-- Light sharpening (unsharp mask) for edge definition
-- Gentle noise reduction (chroma-focused)
-- Resolution normalization (optimized for GPT-4o)
-- JPEG quality optimization (85-92%)
-
 ### Google Gemini AI
 
-This project uses Google Gemini for intelligent recipe generation:
+This project uses Google Gemini for intelligent recipe generation and shopping suggestions:
 - **Model**: `gemini-2.5-flash` or `gemini-1.5-pro`
-- **Purpose**: Generates personalized recipe recommendations based on detected ingredients and user preferences
+- **Purpose**: 
+  - Generates personalized recipe recommendations based on detected ingredients and user preferences
+  - Provides eco-friendly shopping suggestions with brands, prices, environmental impact, and ECO scores
 - **Features**:
   - Creates creative recipe suggestions
   - Identifies missing ingredients needed
@@ -385,6 +390,9 @@ This project uses Google Gemini for intelligent recipe generation:
   - Supports cuisine region preferences
   - Prioritizes recipes using available ingredients
   - Minimizes missing ingredient requirements
+  - Web search integration for recipe URLs
+  - Brand recommendations with environmental impact analysis
+  - ECO score calculation and reasoning
 
 ## Image Processing
 
@@ -396,15 +404,34 @@ The system validates images before processing:
 - Blur detection (Laplacian variance)
 - Clear error messages for invalid images
 
-### Image Enhancement
+## Shopping Suggestions Features
 
-Images are enhanced using a non-destructive pipeline:
-- White balance correction for fridge LED lighting
-- Brightness adjustment (+3% to +8%)
-- Contrast adjustment (+5% to +12%)
-- Light sharpening (unsharp mask, 30-60% strength)
-- Chroma-focused noise reduction
-- Resolution optimization (1024-1600px longest side)
+### Environmental Impact Information
+
+Each brand recommendation includes:
+- **Environmental Impact Score (0-100)**: Higher scores indicate better environmental practices
+- **Sustainability Label**: Excellent (85+), Very Good (70-84), Good (55-69), Fair (40-54), Poor (<40)
+- **Environmental Impact Description**: Detailed explanation of the brand's environmental practices
+- **ECO Score Reasoning**: Explanation of why the brand received its specific score
+
+### View More Interface
+
+The shopping suggestions include a "View More" button for each brand that opens a tabbed interface:
+- **Environmental Impact Tab**: Shows detailed description of the brand's environmental practices
+- **ECO Score Reasoning Tab**: Explains the reasoning behind the assigned environmental score
+- Smooth animations and transitions
+- Easy navigation between tabs
+
+### Factors Considered
+
+Environmental scores are calculated based on:
+- Carbon footprint and greenhouse gas emissions
+- Sustainable sourcing and farming practices
+- Packaging and waste reduction
+- Water usage and conservation
+- Biodiversity impact
+- Certifications (organic, fair trade, etc.)
+- Corporate sustainability initiatives
 
 ## Development
 
@@ -436,9 +463,11 @@ The production build will be in the `frontend/dist` directory.
 
 - **Backend**: 
   - `backend/app.py` - Main Flask application with API endpoints
+  - `backend/utils/dedalus_utils.py` - Dedalus Labs API utilities
   - Image processing functions for validation and enhancement
-  - Ingredient post-processing and normalization
+  - Ingredient post-processing
   - Recipe generation with Gemini AI
+  - Shopping suggestions with environmental impact analysis
   - Server-Sent Events for progress tracking
 
 - **Frontend**: 
@@ -447,6 +476,7 @@ The production build will be in the `frontend/dist` directory.
   - Real-time progress tracking with SSE
   - Manual ingredient management
   - Recipe recalibration
+  - Tabbed shopping suggestions interface
 
 ## Features in Detail
 
@@ -477,8 +507,87 @@ Users can select from various cuisine regions:
 - **Automatic Detection**: Ingredients are detected from uploaded images with confidence scores
 - **Manual Addition**: Users can add ingredients manually that weren't detected
 - **Removal**: Users can remove incorrect or unwanted ingredients
-- **Tagging**: User-added ingredients are tagged as "User Inputted"
+- **Tagging**: User-added ingredients are tagged as "User Inputted" (no confidence score)
 - **Recalibration**: Recipes can be regenerated based on updated ingredient lists
 
-4. Ensure environment variables are set properly
-5. Check that API keys are valid and have sufficient quota
+### Progress Tracking
+
+Real-time progress updates show:
+- Current processing stage (0-100%)
+- Descriptive status messages
+- Visual progress bar with percentage display
+- Smooth animations and transitions
+
+## Troubleshooting
+
+### Backend Issues
+
+**Problem**: Prices always show "$?.??"
+- **Solution**: 
+  - Check backend logs for price extraction errors
+  - Verify Gemini API key is set correctly
+  - Check logs for brand name matching issues
+  - Review price extraction debug logs
+
+### Frontend Issues
+
+**Problem**: Progress bar doesn't update
+- **Solution**:
+  - Check browser console for SSE connection errors
+  - Verify backend is streaming progress events correctly
+  - Check network tab for Server-Sent Events
+
+### Model Inference Issues
+
+**Problem**: No ingredients detected
+- **Solution**:
+  - Ensure your image is clear and shows food items
+  - Verify your Dedalus Labs API key is valid
+  - Check that images meet minimum quality requirements (320x320px, not too dark/blurry)
+  - Try a different image with better lighting
+
+**Problem**: API returns error
+- **Solution**:
+  - Check your Dedalus Labs API key is set correctly
+  - Verify you have API credits/quota available
+  - Check backend console for detailed error messages
+  - Verify Gemini API key is set for recipe generation
+
+**Problem**: Image enhancement fails
+- **Solution**:
+  - Check that OpenCV and Pillow are installed correctly
+  - Verify image format is supported (JPG, PNG, JPEG)
+  - Check backend logs for specific error messages
+
+### Recipe Generation Issues
+
+**Problem**: No recipes generated
+- **Solution**:
+  - Verify Gemini API key is set correctly
+  - Check that at least one ingredient is detected or added
+  - Check backend logs for Gemini API errors
+  - Verify internet connection for API calls
+
+## Notes
+
+- Recipe generation uses Google Gemini AI to create personalized recommendations based on detected ingredients and user preferences
+- Shopping suggestions use Google Gemini AI to find brands, prices, and analyze environmental impact
+- Environmental impact scores and reasoning are generated using AI analysis of brand practices
+- The vision model may not detect all food items perfectly. Results depend on image quality, lighting, and food visibility
+- Manual ingredient addition allows users to supplement automatically detected ingredients
+- Recipe recalibration allows users to update recipes after modifying their ingredient list
+- Image enhancement improves recognition accuracy but may not work perfectly for all image conditions
+- Progress tracking provides real-time feedback during the analysis process
+- Confidence scores indicate the model's certainty about detected ingredients (0.50-1.00)
+- User-added ingredients are marked with "User Inputted" tag and don't have confidence scores
+- Environmental impact information is generated using AI and may not reflect real-time data
+- Prices are estimated based on current market rates and may vary by location
+- ECO scores are calculated based on available information about brand practices
+
+## License
+
+MIT
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.

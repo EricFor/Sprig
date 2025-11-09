@@ -12,8 +12,10 @@ import cv2
 import numpy as np
 from openai import OpenAI
 import re
+import traceback
 from pathlib import Path
 from dotenv import load_dotenv, find_dotenv
+from utils.dedalus_utils import run_ai_query
 
 # Load environment variables from .env file
 
@@ -156,7 +158,7 @@ Rules:
 
 7. Return ONLY valid JSON, no markdown, no blank spaces, no code blocks, no explanations outside the JSON structure.
 
-8. Return a continuous confidence score for each ingredient from 0.00 to 1.00, no percentage signs or other symbols. Include only two decimal places.
+8. Return a continuous confidence score (increments of 0.01) for each ingredient from 0.00 to 1.00, no percentage signs or other symbols. Include only two decimal places.
 
 9. For any packaged ingredients, use visible labels to identify the ingredient. Do not include the brand name in the ingredient name."""
 
@@ -750,7 +752,7 @@ For each recipe, provide:
 3. Prep time in minutes
 4. Cook time in minutes
 5. List of available ingredients used from the provided list: {', '.join(ingredient_names)}
-6. List of missing ingredients needed (common pantry items like oil, salt, pepper can be assumed)
+6. List of missing ingredients needed (ONLY if there are missing ingredients beyond common pantry staples like oil, salt, pepper - if no missing ingredients, omit the "missingIngredients" field entirely or use an empty array)
 7. Relevant tags (e.g., "vegetarian", "vegan-option", "high-protein", "gluten-free", "low-carb", "spicy")
 
 Return ONLY a valid JSON array with this exact structure (no markdown, no code blocks, just pure JSON):
@@ -766,7 +768,13 @@ Return ONLY a valid JSON array with this exact structure (no markdown, no code b
   }}
 ]
 
-Make sure the recipes are practical, use the available ingredients creatively, and respect the user's dietary preferences and cuisine preferences. The availableIngredients should be a subset of the provided ingredients list.
+IMPORTANT: For recipes that can be made entirely with available ingredients (or only need common pantry items), either:
+- Omit the "missingIngredients" field entirely, OR
+- Use an empty array: "missingIngredients": []
+
+Only include actual missing ingredients that are NOT common pantry staples (oil, salt, pepper, water, etc.).
+
+Make sure the recipes are practical, ensure at least 3 ingredients are used, use     the available ingredients creatively, and respect the user's dietary preferences and cuisine preferences. The availableIngredients should be a subset of the provided ingredients list.
 PRIORITIZE recipes that can be made with the available ingredients with minimal or no additional purchases."""
             
             # Call Gemini API
@@ -815,6 +823,49 @@ PRIORITIZE recipes that can be made with the available ingredients with minimal 
             if not isinstance(recipes, list):
                 recipes = [recipes]
             
+            # Clean up recipes: filter out common pantry items and normalize missingIngredients
+            for recipe in recipes:
+                # Normalize missingIngredients field
+                if 'missingIngredients' not in recipe:
+                    recipe['missingIngredients'] = []
+                elif not isinstance(recipe['missingIngredients'], list):
+                    recipe['missingIngredients'] = []
+                elif len(recipe['missingIngredients']) == 0:
+                    recipe['missingIngredients'] = []
+                else:
+                    # Filter out common pantry items that shouldn't be considered "missing"
+                    # Common pantry items (case-insensitive, word-boundary aware)
+                    common_pantry_keywords = {
+                        'oil', 'salt', 'pepper', 'water', 'flour', 'sugar', 'butter', 
+                        'garlic', 'onion', 'vinegar', 'baking soda', 'baking powder',
+                        'vanilla', 'cinnamon', 'paprika', 'oregano', 'basil', 'thyme'
+                    }
+                    
+                    filtered_missing = []
+                    for ing in recipe['missingIngredients']:
+                        if not ing or not isinstance(ing, str):
+                            continue
+                        ing_lower = ing.lower().strip()
+                        # Check if ingredient is a common pantry item
+                        # Also check if any word in the ingredient matches common pantry items
+                        ing_words = set(ing_lower.split())
+                        is_pantry_item = False
+                        
+                        # Direct match
+                        if ing_lower in common_pantry_keywords:
+                            is_pantry_item = True
+                        # Word match (e.g., "olive oil" contains "oil")
+                        elif any(word in common_pantry_keywords for word in ing_words):
+                            # But allow specific oils like "olive oil", "coconut oil" if they're explicitly needed
+                            # Only filter generic "oil" or if it's clearly a pantry staple
+                            if ing_lower in ['oil', 'vegetable oil', 'cooking oil']:
+                                is_pantry_item = True
+                        
+                        if not is_pantry_item:
+                            filtered_missing.append(ing)
+                    
+                    recipe['missingIngredients'] = filtered_missing if filtered_missing else []
+            
             logger.info(f"Successfully generated {len(recipes)} recipes")
             return recipes[:10]  # Limit to 10 recipes
             
@@ -826,47 +877,714 @@ PRIORITIZE recipes that can be made with the available ingredients with minimal 
         logger.error(f"Error generating recipes: {str(e)}")
         return []
 
-def generate_shopping_suggestions(missing_ingredients):
+def get_brands(missing_ingredients: List[str]) -> Dict[str, List[str]]:
     """
-    Generate shopping suggestions with eco-scores.
-    This is mock data - in production, integrate with store APIs.
+    Get brand names for each missing ingredient using AI.
+    
+    Args:
+        missing_ingredients: List of ingredient names
+        
+    Returns:
+        Dictionary mapping ingredient names to lists of brand names
     """
-    suggestions = []
+    brands_data = {}
     
     for ingredient in missing_ingredients:
-        stores = [
-            {
-                "name": "Local Farmers Market",
-                "distance": "0.5 mi",
-                "ecoScore": 95,
-                "sustainability": "Excellent",
-                "rating": "Local sourcing, zero-waste packaging",
-                "price": "$8.99"
-            },
-            {
-                "name": "Whole Foods Market",
-                "distance": "2.1 mi",
-                "ecoScore": 82,
-                "sustainability": "Very Good",
-                "rating": "Organic options, sustainable packaging",
-                "price": "$12.99"
-            },
-            {
-                "name": "Trader Joe's",
-                "distance": "3.5 mi",
-                "ecoScore": 75,
-                "sustainability": "Good",
-                "rating": "Sustainable sourcing, recyclable packaging",
-                "price": "$9.99"
-            }
-        ]
+        try:
+            query = f"""
+            1. Find 10 different brands that sell {ingredient}.
+            2. Output the results in the form: [brand1, brand2, brand3, brand4, ...]
+            3. Return ONLY a JSON array, no other text.
+            """
+            
+            result = run_ai_query(query)
+            
+            # Try to extract JSON array from the response
+            # Remove markdown code blocks if present
+            result = result.strip()
+            if result.startswith("```json"):
+                result = result[7:]
+            elif result.startswith("```"):
+                result = result[3:]
+            if result.endswith("```"):
+                result = result[:-3]
+            result = result.strip()
+            
+            # Try to parse as JSON
+            try:
+                brands = json.loads(result)
+                if isinstance(brands, list):
+                    brands_data[ingredient] = brands[:10]  # Limit to 10 brands
+                else:
+                    logger.warning(f"Expected list for {ingredient}, got {type(brands)}")
+                    brands_data[ingredient] = []
+            except json.JSONDecodeError:
+                # Try to extract list from text
+                # Look for patterns like [brand1, brand2, ...]
+                match = re.search(r'\[([^\]]+)\]', result)
+                if match:
+                    brands_str = match.group(1)
+                    brands = [b.strip().strip('"\'') for b in brands_str.split(',')]
+                    brands_data[ingredient] = brands[:10]
+                else:
+                    logger.warning(f"Could not parse brands for {ingredient}")
+                    brands_data[ingredient] = []
+                    
+        except Exception as e:
+            logger.error(f"Error getting brands for {ingredient}: {str(e)}")
+            brands_data[ingredient] = []
+    
+    return brands_data
+
+
+def get_ecoscores(brands_data: Dict[str, List[str]]) -> Tuple[Dict[str, Dict[str, int]], Dict[str, Dict[str, str]], Dict[str, Dict[str, str]]]:
+    """
+    Get eco scores, environmental impact details, and reasoning for each brand using AI.
+    
+    Args:
+        brands_data: Dictionary mapping ingredient names to lists of brand names
         
-        suggestions.append({
-            "ingredient": ingredient,
-            "stores": stores
-        })
+    Returns:
+        Tuple of (eco_scores, environmental_impact, reasoning) where:
+        - eco_scores: Dictionary mapping ingredient names to dictionaries of brand: eco_score
+        - environmental_impact: Dictionary mapping ingredient names to dictionaries of brand: impact_description
+        - reasoning: Dictionary mapping ingredient names to dictionaries of brand: reasoning_description
+    """
+    eco_scores = {}
+    environmental_impact = {}
+    reasoning = {}
+    
+    for ingredient, brands in brands_data.items():
+        if not brands:
+            eco_scores[ingredient] = {}
+            environmental_impact[ingredient] = {}
+            reasoning[ingredient] = {}
+            continue
+            
+        try:
+            brands_str = ", ".join(brands)
+            query = f"""For the ingredient "{ingredient}", analyze the environmental impact of these brands: {brands_str}
+
+For each brand, provide:
+1. An environmental score from 0-100 (higher is better)
+2. A detailed description of the brand's environmental impact (2-3 sentences)
+3. Reasoning explaining why the brand received that specific eco score (2-3 sentences)
+
+Consider factors such as:
+- Carbon footprint and greenhouse gas emissions
+- Sustainable sourcing and farming practices
+- Packaging and waste reduction
+- Water usage and conservation
+- Biodiversity impact
+- Certifications (organic, fair trade, etc.)
+- Corporate sustainability initiatives
+
+Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks, no explanations):
+{{
+  "brand1": {{
+    "score": 85,
+    "environmentalImpact": "Detailed description of environmental impact...",
+    "reasoning": "Explanation of why this score was assigned..."
+  }},
+  "brand2": {{
+    "score": 72,
+    "environmentalImpact": "Detailed description of environmental impact...",
+    "reasoning": "Explanation of why this score was assigned..."
+  }}
+}}
+
+If information is not available for a brand, use:
+- score: 50
+- environmentalImpact: "Limited information available about this brand's environmental practices."
+- reasoning: "Default score assigned due to lack of available environmental data."
+
+Return ONLY the JSON object, no other text or explanations."""
+            
+            # Try with JSON mode first (if supported by model)
+            try:
+                result = run_ai_query(query, json_mode=True)
+            except Exception as json_mode_error:
+                # If JSON mode fails, try without it
+                logger.debug(f"JSON mode not supported, trying without: {str(json_mode_error)}")
+                result = run_ai_query(query, json_mode=False)
+            
+            # Try to extract JSON object from the response
+            result_clean = result.strip()
+            if result_clean.startswith("```json"):
+                result_clean = result_clean[7:]
+            elif result_clean.startswith("```"):
+                result_clean = result_clean[3:]
+            if result_clean.endswith("```"):
+                result_clean = result_clean[:-3]
+            result_clean = result_clean.strip()
+            
+            # Try to find the outermost JSON object by matching braces
+            brace_count = 0
+            json_start = -1
+            json_end = -1
+            
+            for i, char in enumerate(result_clean):
+                if char == '{':
+                    if brace_count == 0:
+                        json_start = i
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0 and json_start != -1:
+                        json_end = i
+                        break
+            
+            if json_start != -1 and json_end != -1:
+                result_clean = result_clean[json_start:json_end + 1]
+            
+            try:
+                data = json.loads(result_clean)
+                if isinstance(data, dict):
+                    cleaned_scores = {}
+                    cleaned_impact = {}
+                    cleaned_reasoning = {}
+                    
+                    for brand in brands:
+                        brand_data = data.get(brand, {})
+                        if isinstance(brand_data, dict):
+                            # Extract score
+                            try:
+                                score = int(float(brand_data.get("score", 50)))
+                                cleaned_scores[brand] = max(0, min(100, score))  # Clamp to 0-100
+                            except (ValueError, TypeError):
+                                cleaned_scores[brand] = 50
+                            
+                            # Extract environmental impact
+                            impact = brand_data.get("environmentalImpact", "Limited information available about this brand's environmental practices.")
+                            cleaned_impact[brand] = str(impact).strip() if impact else "Limited information available about this brand's environmental practices."
+                            
+                            # Extract reasoning
+                            reason = brand_data.get("reasoning", "Default score assigned due to lack of available environmental data.")
+                            cleaned_reasoning[brand] = str(reason).strip() if reason else "Default score assigned due to lack of available environmental data."
+                        else:
+                            # Fallback if brand data is not a dict
+                            cleaned_scores[brand] = 50
+                            cleaned_impact[brand] = "Limited information available about this brand's environmental practices."
+                            cleaned_reasoning[brand] = "Default score assigned due to lack of available environmental data."
+                    
+                    eco_scores[ingredient] = cleaned_scores
+                    environmental_impact[ingredient] = cleaned_impact
+                    reasoning[ingredient] = cleaned_reasoning
+                else:
+                    logger.warning(f"Expected dict for eco scores of {ingredient}, got {type(data)}")
+                    eco_scores[ingredient] = {brand: 50 for brand in brands}
+                    environmental_impact[ingredient] = {brand: "Limited information available about this brand's environmental practices." for brand in brands}
+                    reasoning[ingredient] = {brand: "Default score assigned due to lack of available environmental data." for brand in brands}
+            except json.JSONDecodeError as json_error:
+                logger.warning(f"Could not parse eco scores for {ingredient}: {str(json_error)}")
+                logger.debug(f"Failed to parse JSON. Response was: {result_clean[:500]}")
+                eco_scores[ingredient] = {brand: 50 for brand in brands}
+                environmental_impact[ingredient] = {brand: "Limited information available about this brand's environmental practices." for brand in brands}
+                reasoning[ingredient] = {brand: "Default score assigned due to lack of available environmental data." for brand in brands}
+                
+        except Exception as e:
+            logger.error(f"Error getting eco scores for {ingredient}: {str(e)}")
+            eco_scores[ingredient] = {brand: 50 for brand in brands}
+            environmental_impact[ingredient] = {brand: "Limited information available about this brand's environmental practices." for brand in brands}
+            reasoning[ingredient] = {brand: "Default score assigned due to lack of available environmental data." for brand in brands}
+    
+    return eco_scores, environmental_impact, reasoning
+
+
+def get_online_links_and_prices(brands_data: Dict[str, List[str]]) -> Tuple[Dict[str, Dict[str, str]], Dict[str, Dict[str, str]]]:
+    """
+    Get online product links and prices for each brand using AI.
+    Supports all major online retailers (Amazon, Walmart, Target, Whole Foods, etc.)
+    
+    Args:
+        brands_data: Dictionary mapping ingredient names to lists of brand names
+        
+    Returns:
+        Tuple of (product_links_map, prices_map) where:
+        - product_links_map: Dictionary mapping ingredient names to dictionaries of brand: product_link
+        - prices_map: Dictionary mapping ingredient names to dictionaries of brand: price
+    """
+    product_links_map = {}
+    prices_map = {}
+    
+    for ingredient, brands in brands_data.items():
+        if not brands:
+            product_links_map[ingredient] = {}
+            prices_map[ingredient] = {}
+            continue
+            
+        try:
+            brands_str = ", ".join(brands)
+            query = f"""For the ingredient "{ingredient}", find REAL online product links and CURRENT prices for these brands: {brands_str}
+
+You can search on ANY major online retailer including:
+- Amazon (amazon.com)
+- Walmart (walmart.com)
+- Target (target.com)
+- Whole Foods (wholefoodsmarket.com)
+- Instacart (instacart.com)
+- Kroger (kroger.com)
+- Other reputable online grocery stores
+
+CRITICAL REQUIREMENTS:
+1. URLs MUST be valid, working product URLs from any reputable online retailer
+2. DO NOT use placeholder URLs, search URLs (with ?q= or /s?k=), generic links, or made-up URLs
+3. URLs must be direct product pages (not category pages or search results)
+4. If you cannot find a real product URL, use empty string "" for that brand's link
+5. Prices MUST be in format "$X.XX" (e.g., "$5.99", "$12.50", "$19.99")
+6. If price is unavailable, use "$?.??"
+7. Only include REAL, VERIFIABLE product URLs that would work when clicked
+8. Prefer the retailer with the best price or most availability for each brand
+
+Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks, no explanations):
+{{
+  "links": {{
+    "brand1": "https://www.retailer.com/product/...",
+    "brand2": "https://www.retailer.com/product/..."
+  }},
+  "prices": {{
+    "brand1": "$X.XX",
+    "brand2": "$Y.YY"
+  }}
+}}
+
+Example of CORRECT format:
+{{
+  "links": {{
+    "Lundberg": "https://www.amazon.com/dp/B000EDF0R4",
+    "Uncle Ben's": "https://www.walmart.com/ip/12345678"
+  }},
+  "prices": {{
+    "Lundberg": "$8.99",
+    "Uncle Ben's": "$4.50"
+  }}
+}}
+
+Return ONLY the JSON object, no other text or explanations."""
+            
+            # Try with JSON mode first (if supported by model)
+            try:
+                result = run_ai_query(query, json_mode=True)
+            except Exception as json_mode_error:
+                # If JSON mode fails, try without it
+                logger.debug(f"JSON mode not supported, trying without: {str(json_mode_error)}")
+                result = run_ai_query(query, json_mode=False)
+            
+            # Log the raw response for debugging (first 500 chars)
+            logger.debug(f"Raw AI response for {ingredient} (first 500 chars): {result[:500]}")
+            
+            # Try to extract JSON object from the response
+            result_clean = result.strip()
+            
+            # Remove markdown code blocks
+            if result_clean.startswith("```json"):
+                result_clean = result_clean[7:]
+            elif result_clean.startswith("```"):
+                result_clean = result_clean[3:]
+            if result_clean.endswith("```"):
+                result_clean = result_clean[:-3]
+            result_clean = result_clean.strip()
+            
+            # Try to extract JSON object from response (handle cases where JSON is embedded in text)
+            # Method 1: Try to find the outermost JSON object by matching braces
+            brace_count = 0
+            json_start = -1
+            json_end = -1
+            
+            for i, char in enumerate(result_clean):
+                if char == '{':
+                    if brace_count == 0:
+                        json_start = i
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0 and json_start != -1:
+                        json_end = i
+                        break
+            
+            if json_start != -1 and json_end != -1:
+                result_clean = result_clean[json_start:json_end + 1]
+            
+            try:
+                data = json.loads(result_clean)
+                if isinstance(data, dict):
+                    # Extract links and prices
+                    links = data.get("links", {})
+                    prices = data.get("prices", {})
+                    
+                    # Ensure links and prices are dictionaries
+                    if not isinstance(links, dict):
+                        links = {}
+                    if not isinstance(prices, dict):
+                        prices = {}
+                    
+                    # Validate and clean prices
+                    cleaned_prices = {}
+                    for brand in brands:
+                        # Get price for this brand
+                        price = prices.get(brand, "$?.??")
+                        if isinstance(price, str):
+                            # Clean up price string
+                            price_clean = price.strip()
+                            # Ensure it starts with $ or is N/A
+                            if not price_clean.startswith("$") and price_clean.upper() != "N/A":
+                                # Try to extract price from text
+                                price_match = re.search(r'\$[\d,]+\.?\d*', price_clean)
+                                if price_match:
+                                    price_clean = price_match.group(0)
+                                else:
+                                    price_clean = "$?.??"
+                            # Validate price format
+                            if not re.match(r'^\$[\d,]+\.?\d*$|^\$\.\?\?$|^N/A$', price_clean):
+                                price_clean = "$?.??"
+                            cleaned_prices[brand] = price_clean
+                        else:
+                            cleaned_prices[brand] = "$?.??"
+                    
+                    # Validate and clean links
+                    cleaned_links = {}
+                    for brand in brands:
+                        link = links.get(brand, "")
+                        if isinstance(link, str) and link.strip():
+                            link_clean = link.strip()
+                            # Remove quotes if present
+                            link_clean = link_clean.strip('"').strip("'")
+                            
+                            # Validate and normalize URL
+                            if link_clean:
+                                # Ensure it starts with http:// or https://
+                                if not link_clean.startswith(("http://", "https://")):
+                                    # Try to construct proper URL
+                                    if link_clean.startswith("www."):
+                                        link_clean = "https://" + link_clean
+                                    elif "/" in link_clean:
+                                        # Try to detect domain and construct URL
+                                        # Extract domain if possible (e.g., "walmart.com/product" -> "https://www.walmart.com/product")
+                                        parts = link_clean.split("/")
+                                        if len(parts) > 0 and "." in parts[0]:
+                                            domain = parts[0]
+                                            path = "/" + "/".join(parts[1:]) if len(parts) > 1 else ""
+                                            link_clean = "https://www." + domain + path
+                                        else:
+                                            # Invalid format, skip
+                                            link_clean = ""
+                                    else:
+                                        # Invalid format, skip
+                                        link_clean = ""
+                                
+                                # Clean up URL - remove any trailing punctuation that might break the link
+                                link_clean = link_clean.rstrip('.,;:!?')
+                                
+                                # Validate it's a proper product URL from a reputable online retailer
+                                # Must be a product page (not a search URL or category page)
+                                valid_domains = [
+                                    "amazon.com", "amazon.", "walmart.com", "target.com",
+                                    "wholefoodsmarket.com", "instacart.com", "kroger.com",
+                                    "safeway.com", "wegmans.com", "publix.com", "costco.com",
+                                    "sprouts.com", "traderjoes.com", "aldi.com"
+                                ]
+                                
+                                is_valid_retailer = any(domain in link_clean.lower() for domain in valid_domains)
+                                
+                                # Reject search URLs and category pages
+                                is_search_url = any(param in link_clean.lower() for param in ["/s?k=", "?q=", "/search?", "/browse?"])
+                                
+                                is_valid_product_url = (
+                                    link_clean.startswith(("http://", "https://")) and 
+                                    is_valid_retailer and
+                                    not is_search_url
+                                )
+                                
+                                if is_valid_product_url:
+                                    cleaned_links[brand] = link_clean
+                                else:
+                                    cleaned_links[brand] = ""
+                                    logger.debug(f"Invalid product URL format for {brand}: {link} (must be from a valid retailer and not a search URL)")
+                            else:
+                                cleaned_links[brand] = ""
+                        else:
+                            cleaned_links[brand] = ""
+                    
+                    # Log cleaned links for debugging
+                    logger.debug(f"Cleaned links for {ingredient}: {cleaned_links}")
+                    logger.debug(f"Cleaned prices for {ingredient}: {cleaned_prices}")
+                    
+                    product_links_map[ingredient] = cleaned_links
+                    prices_map[ingredient] = cleaned_prices
+                    
+                    logger.info(f"Successfully parsed online product data for {ingredient}: {len(cleaned_links)} links, {len(cleaned_prices)} prices")
+                else:
+                    logger.warning(f"Expected dict for product data of {ingredient}, got {type(data)}. Response: {result_clean[:200]}")
+                    product_links_map[ingredient] = {}
+                    prices_map[ingredient] = {}
+            except json.JSONDecodeError as json_error:
+                logger.warning(f"Could not parse online product data for {ingredient}: {str(json_error)}")
+                logger.warning(f"Failed to parse JSON. Attempted to parse: {result_clean[:300]}...")
+                logger.warning(f"Full response (first 1000 chars): {result[:1000]}")
+                # Try to extract at least partial data using regex as fallback
+                try:
+                    # Try to extract links and prices using regex as fallback
+                    links_dict = {}
+                    prices_dict = {}
+                    for brand in brands:
+                        # Look for brand-specific patterns in the original result
+                        # Try multiple patterns to catch variations
+                        link_patterns = [
+                            rf'"{re.escape(brand)}"\s*:\s*"([^"]*)"',  # Simple pattern
+                            rf'"{re.escape(brand)}"\s*:\s*"(https?://[^"]*)"',  # URL pattern for any retailer
+                            rf'{re.escape(brand)}\s*:\s*"(https?://[^"]*)"',  # Without quotes around brand
+                        ]
+                        price_patterns = [
+                            rf'"{re.escape(brand)}"\s*:\s*"(\$[^"]*)"',  # Simple price pattern
+                            rf'"{re.escape(brand)}"\s*:\s*"([^"]*)"',  # Any string, we'll validate
+                            rf'{re.escape(brand)}\s*:\s*"(\$[^"]*)"',  # Without quotes around brand
+                        ]
+                        
+                        link_found = False
+                        for pattern in link_patterns:
+                            link_match = re.search(pattern, result, re.IGNORECASE)
+                            if link_match:
+                                extracted_link = link_match.group(1)
+                                # Validate and normalize the extracted link
+                                extracted_link = extracted_link.strip().strip('"').strip("'")
+                                
+                                # Normalize URL
+                                if not extracted_link.startswith(("http://", "https://")):
+                                    if extracted_link.startswith("www."):
+                                        extracted_link = "https://" + extracted_link
+                                    elif "/" in extracted_link:
+                                        # Try to detect domain and construct URL
+                                        parts = extracted_link.split("/")
+                                        if len(parts) > 0 and "." in parts[0]:
+                                            domain = parts[0]
+                                            path = "/" + "/".join(parts[1:]) if len(parts) > 1 else ""
+                                            extracted_link = "https://www." + domain + path
+                                        else:
+                                            extracted_link = ""
+                                    else:
+                                        extracted_link = ""
+                                
+                                # Clean up URL
+                                extracted_link = extracted_link.rstrip('.,;:!?')
+                                
+                                # Validate it's a proper product URL from a reputable retailer
+                                valid_domains = [
+                                    "amazon.com", "amazon.", "walmart.com", "target.com",
+                                    "wholefoodsmarket.com", "instacart.com", "kroger.com",
+                                    "safeway.com", "wegmans.com", "publix.com", "costco.com",
+                                    "sprouts.com", "traderjoes.com", "aldi.com"
+                                ]
+                                
+                                is_valid_retailer = any(domain in extracted_link.lower() for domain in valid_domains)
+                                is_search_url = any(param in extracted_link.lower() for param in ["/s?k=", "?q=", "/search?", "/browse?"])
+                                
+                                is_valid_product_url = (
+                                    extracted_link.startswith(("http://", "https://")) and 
+                                    is_valid_retailer and
+                                    not is_search_url
+                                )
+                                
+                                if is_valid_product_url:
+                                    links_dict[brand] = extracted_link
+                                    link_found = True
+                                    break
+                        if not link_found:
+                            links_dict[brand] = ""
+                        
+                        price_found = False
+                        for pattern in price_patterns:
+                            price_match = re.search(pattern, result, re.IGNORECASE)
+                            if price_match:
+                                price_val = price_match.group(1)
+                                # Validate it looks like a price
+                                if "$" in price_val or re.search(r'\d+\.\d{2}', price_val):
+                                    # Extract price if embedded in text
+                                    dollar_match = re.search(r'\$[\d,]+\.?\d*', price_val)
+                                    if dollar_match:
+                                        prices_dict[brand] = dollar_match.group(0)
+                                    else:
+                                        prices_dict[brand] = "$?.??"
+                                    price_found = True
+                                    break
+                        if not price_found:
+                            prices_dict[brand] = "$?.??"
+                    
+                    product_links_map[ingredient] = links_dict
+                    prices_map[ingredient] = prices_dict
+                    logger.info(f"Partially recovered online product data for {ingredient} using regex fallback: {len(links_dict)} links, {len(prices_dict)} prices")
+                except Exception as fallback_error:
+                    logger.warning(f"Regex fallback also failed for {ingredient}: {str(fallback_error)}")
+                    logger.debug(f"Fallback error traceback: {traceback.format_exc()}")
+                    product_links_map[ingredient] = {}
+                    prices_map[ingredient] = {}
+                
+        except Exception as e:
+            logger.error(f"Error fetching online product links and prices for {ingredient}: {str(e)}")
+            product_links_map[ingredient] = {}
+            prices_map[ingredient] = {}
+    
+    return product_links_map, prices_map
+
+
+def get_sustainability_label(eco_score: int) -> str:
+    """
+    Convert eco score to sustainability label.
+    
+    Args:
+        eco_score: Eco score from 0-100
+        
+    Returns:
+        Sustainability label string
+    """
+    if eco_score >= 85:
+        return "Excellent"
+    elif eco_score >= 70:
+        return "Very Good"
+    elif eco_score >= 55:
+        return "Good"
+    elif eco_score >= 40:
+        return "Fair"
+    else:
+        return "Poor"
+
+
+def generate_shopping_suggestions(missing_ingredients: List[str]) -> List[Dict[str, Any]]:
+    """
+    Generate shopping suggestions with eco-scores using AI.
+    Falls back to mock data if AI queries fail.
+    
+    Args:
+        missing_ingredients: List of ingredient names
+        
+    Returns:
+        List of suggestion dictionaries with ingredient and stores
+    """
+    if not missing_ingredients:
+        return []
+    
+    suggestions = []
+    
+    try:
+        # Get brands for each ingredient
+        logger.info("Fetching brands for ingredients...")
+        brands_data = get_brands(missing_ingredients)
+        
+        # Get eco scores, environmental impact, and reasoning for brands
+        logger.info("Fetching eco scores and environmental impact for brands...")
+        eco_scores, environmental_impact, reasoning = get_ecoscores(brands_data)
+        
+        # Get prices for brands (we still need prices, but not links)
+        logger.info("Fetching prices for brands...")
+        _, prices_map = get_online_links_and_prices(brands_data)
+        
+        # Build suggestions
+        for ingredient in missing_ingredients:
+            stores = []
+            ingredient_brands = brands_data.get(ingredient, [])
+            ingredient_scores = eco_scores.get(ingredient, {})
+            ingredient_impact = environmental_impact.get(ingredient, {})
+            ingredient_reasoning = reasoning.get(ingredient, {})
+            ingredient_prices = prices_map.get(ingredient, {})
+            
+            # Create store entries for each brand
+            for brand in ingredient_brands:
+                eco_score = ingredient_scores.get(brand, 50)
+                impact = ingredient_impact.get(brand, "Limited information available about this brand's environmental practices.")
+                reason = ingredient_reasoning.get(brand, "Default score assigned due to lack of available environmental data.")
+                price = ingredient_prices.get(brand, "$?.??")  # Use fetched price or default
+                
+                # Final validation: ensure price is not empty or None
+                if not price or price == "" or price is None:
+                    price = "$?.??"
+                price = str(price).strip()
+                
+                # Ensure impact and reasoning are strings
+                impact = str(impact).strip() if impact else "Limited information available about this brand's environmental practices."
+                reason = str(reason).strip() if reason else "Default score assigned due to lack of available environmental data."
+                
+                # Log store entry for debugging
+                logger.info(f"Store entry for {ingredient} - Brand: {brand}, Price: {price}, Eco Score: {eco_score}")
+                
+                store_entry = {
+                    "name": brand,
+                    "distance": "Online",  # Brands are online, no physical distance
+                    "ecoScore": eco_score,
+                    "sustainability": get_sustainability_label(eco_score),
+                    "rating": f"Eco score: {eco_score}/100",
+                    "price": price,  # Ensure price is a non-empty string
+                    "environmentalImpact": impact,  # Environmental impact description
+                    "reasoning": reason  # Reasoning for eco score
+                }
+                stores.append(store_entry)
+                
+                # Log final store entry for verification
+                logger.debug(f"Final store entry for {ingredient}/{brand}: price={store_entry['price']}, ecoScore={store_entry['ecoScore']}")
+            
+            # Sort stores by eco score (highest first)
+            stores = sorted(stores, key=lambda x: x['ecoScore'], reverse=True)
+            
+            # If no stores found, use mock data as fallback
+            if not stores:
+                logger.warning(f"No stores found for {ingredient}, using mock data")
+                stores = get_mock_stores()
+            
+            suggestions.append({
+                "ingredient": ingredient,
+                "stores": stores
+            })
+            
+    except Exception as e:
+        logger.error(f"Error generating shopping suggestions: {str(e)}")
+        logger.info("Falling back to mock data")
+        # Fallback to mock data
+        for ingredient in missing_ingredients:
+            suggestions.append({
+                "ingredient": ingredient,
+                "stores": get_mock_stores()
+            })
     
     return suggestions
+
+
+def get_mock_stores() -> List[Dict[str, Any]]:
+    """
+    Get mock store data as fallback.
+    
+    Returns:
+        List of mock store dictionaries
+    """
+    return [
+        {
+            "name": "Local Farmers Market",
+            "distance": "0.5 mi",
+            "ecoScore": 95,
+            "sustainability": "Excellent",
+            "rating": "Eco score: 95/100",
+            "price": "$8.99",
+            "environmentalImpact": "This local market sources directly from organic farms, minimizing transportation emissions. They use minimal packaging and prioritize seasonal, locally-grown produce.",
+            "reasoning": "Received a high score due to strong local sourcing, organic certifications, and minimal packaging practices that significantly reduce environmental footprint."
+        },
+        {
+            "name": "Whole Foods Market",
+            "distance": "2.1 mi",
+            "ecoScore": 82,
+            "sustainability": "Very Good",
+            "rating": "Eco score: 82/100",
+            "price": "$12.99",
+            "environmentalImpact": "Whole Foods has strong sustainability initiatives including organic product lines, responsible sourcing, and waste reduction programs. However, they source from various locations which increases transportation emissions.",
+            "reasoning": "Good score based on comprehensive sustainability programs and organic options, but slightly lower due to broader sourcing that increases carbon footprint."
+        },
+        {
+            "name": "Trader Joe's",
+            "distance": "3.5 mi",
+            "ecoScore": 75,
+            "sustainability": "Good",
+            "rating": "Eco score: 75/100",
+            "price": "$9.99",
+            "environmentalImpact": "Trader Joe's offers many organic and sustainably-sourced products with competitive pricing. They have made progress in reducing packaging, though there's room for improvement in sustainable sourcing.",
+            "reasoning": "Solid score reflecting good organic options and packaging improvements, but moderate due to mixed sourcing practices and limited transparency on some environmental metrics."
+        }
+    ]
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))

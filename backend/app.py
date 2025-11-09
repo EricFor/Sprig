@@ -47,7 +47,7 @@ FALLBACK_MODEL = os.getenv("DEDALUS_MODEL_FALLBACK", os.getenv("OPENAI_MODEL_FAL
 USE_FALLBACK = os.getenv("USE_FALLBACK_MODEL", "false").lower() == "true"
 
 # Default confidence threshold
-DEFAULT_MIN_CONFIDENCE = 0.85
+DEFAULT_MIN_CONFIDENCE = 0.50
 DEFAULT_TOP_K = None  # No limit by default
 
 # Initialize inflect engine for singularization
@@ -190,7 +190,7 @@ Rules:
 1. Return ONLY a valid JSON object with this exact structure:
    {
      "ingredients": [
-       {"name": "ingredient_name", "confidence": "confidence_score_between_0_and_100_percent"}
+       {"name": "ingredient_name", "confidence": "confidence_score_between_0.00_and_1.00"}
      ],
      "notes": "optional brief context"
    }
@@ -199,23 +199,29 @@ Rules:
    - Brand names (e.g., "Coca-Cola", "Heinz")
    - bags, packaging, utensils
    - Vague labels like "food", "stuff", "things"
-   - Any item you are less than 75% confident about
+   - Any item you are less than 0.50 confident about
    - Any non-food items
 
-3. Only include ingredients you can clearly identify with medium-high confidence (≥75 percent).
+3. Only include ingredients you can clearly identify with medium-high confidence (≥0.50).
 
 4. Use common ingredient names (e.g., "tomato" not "ripe red tomato", "chicken" not "organic chicken breast").
 
 5. Return ingredients as singular nouns when possible (e.g., "egg" not "eggs", "tomato" not "tomatoes").
 
-6. Do not include confidence scores below 75 percent.
+6. Do not include confidence scores below 0.50 confidence score.
 
-7. Return ONLY valid JSON, no markdown, no code blocks, no explanations outside the JSON structure."""
+7. Return ONLY valid JSON, no markdown, no blank spaces, no code blocks, no explanations outside the JSON structure.
+
+8. Return a continuous confidence score for each ingredient from 0.00 to 1.00, no percentage signs or other symbols. Include only two decimal places.
+
+9. For any packaged ingredients, use visible labels to identify the ingredient. Do not include the brand name in the ingredient name."""
+
+
 
     user_message = """Analyze this refrigerator image and identify all visible food ingredients.
 
 Return ONLY a JSON object with the structure specified in the system message.
-Include only ingredients you can identify with high confidence (≥75 percent)."""
+Include only ingredients you can identify with high confidence (≥0.50)."""
 
     try:
         # Note: response_format may not be supported for vision models in all cases
@@ -446,7 +452,7 @@ def classify_fridge():
     
     Accepts:
     - One or more images (files with key 'images' or 'image')
-    - Optional: min_conf (float, default 0.90)
+    - Optional: min_conf (float, default 0.50)
     - Optional: top_k (int, default None)
     - Optional: image_urls (list of URLs, for remote images)
     
@@ -597,7 +603,7 @@ def analyze_fridge():
             preferences = json.loads(request.form['preferences'])
         
         # Use new classification endpoint logic
-        min_conf = float(request.form.get('min_conf', 0.80))  # Lower threshold for legacy endpoint
+        min_conf = float(request.form.get('min_conf', 0.50))  # Lower threshold for legacy endpoint
         
         # Get image
         if 'image' not in request.files:

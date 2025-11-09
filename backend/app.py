@@ -682,8 +682,18 @@ def generate_recipes(ingredients, preferences):
             pref_strings.append("gluten-free")
         if preferences.get('dairyFree'):
             pref_strings.append("dairy-free")
+        if preferences.get('halal'):
+            pref_strings.append("halal")
+        if preferences.get('kosher'):
+            pref_strings.append("kosher")
         
         preferences_text = ", ".join(pref_strings) if pref_strings else "no specific dietary restrictions"
+        
+        # Add cuisine regions if provided
+        cuisine_regions = preferences.get('cuisineRegions', [])
+        cuisine_text = ""
+        if cuisine_regions and len(cuisine_regions) > 0:
+            cuisine_text = f"\n\nPreferred cuisine styles: {', '.join(cuisine_regions)}. Prioritize recipes from these cuisines when possible."
         
         # Use Gemini for recipe generation (optional - can be replaced with OpenAI)
         try:
@@ -704,7 +714,13 @@ def generate_recipes(ingredients, preferences):
             # Create prompt for recipe generation
             prompt = f"""Generate 4 recipe recommendations based on these available ingredients: {', '.join(ingredient_names)}.
 
-User preferences: {preferences_text}
+User dietary preferences: {preferences_text}{cuisine_text}
+
+IMPORTANT: Prioritize recipes that can be made PRIMARILY or ENTIRELY with the available ingredients. 
+- Include at least 2 recipes that require NO additional ingredients (or only common pantry staples like salt, pepper, oil)
+- Include recipes that maximize use of the available ingredients
+- Only suggest missing ingredients that are absolutely necessary and not common pantry items
+- If cuisine preferences are specified, prioritize recipes from those cuisines
 
 For each recipe, provide:
 1. A creative and appealing recipe name
@@ -728,7 +744,8 @@ Return ONLY a valid JSON array with this exact structure (no markdown, no code b
   }}
 ]
 
-Make sure the recipes are practical, use the available ingredients creatively, and respect the user's dietary preferences. The availableIngredients should be a subset of the provided ingredients list."""
+Make sure the recipes are practical, use the available ingredients creatively, and respect the user's dietary preferences and cuisine preferences. The availableIngredients should be a subset of the provided ingredients list.
+PRIORITIZE recipes that can be made with the available ingredients with minimal or no additional purchases."""
             
             # Call Gemini API
             headers = {'Content-Type': 'application/json'}

@@ -13,17 +13,194 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [showPreferences, setShowPreferences] = useState(false)
+  const [showCuisineRegions, setShowCuisineRegions] = useState(false)
   const [activeTab, setActiveTab] = useState('ingredients')
+  const [dietSearchQuery, setDietSearchQuery] = useState('')
+  const [cuisineSearchQuery, setCuisineSearchQuery] = useState('')
   
-  // User taste preferences
+  // User diet preferences
   const [preferences, setPreferences] = useState({
     vegan: false,
     vegetarian: false,
     spicy: false,
     lowCarb: false,
     glutenFree: false,
-    dairyFree: false
+    dairyFree: false,
+    halal: false,
+    kosher: false
   })
+
+  // Cuisine regions data
+  const [selectedCuisines, setSelectedCuisines] = useState([])
+  
+  const cuisineRegions = {
+    "regions": [
+      {
+        "name": "Africa",
+        "subregions": [
+          {
+            "name": "North Africa",
+            "cuisines": ["Moroccan", "Algerian", "Tunisian", "Libyan", "Egyptian"]
+          },
+          {
+            "name": "West Africa",
+            "cuisines": ["Nigerian", "Ghanaian", "Senegalese", "Ivorian", "Togolese", "Beninese"]
+          },
+          {
+            "name": "Central Africa",
+            "cuisines": ["Cameroonian", "Congolese", "Gabonese", "Chadian", "Central African"]
+          },
+          {
+            "name": "East Africa",
+            "cuisines": ["Ethiopian", "Eritrean", "Somalian", "Kenyan", "Tanzanian", "Ugandan"]
+          },
+          {
+            "name": "Southern Africa",
+            "cuisines": ["South African", "Zimbabwean", "Zambian", "Namibian", "Botswanan"]
+          }
+        ]
+      },
+      {
+        "name": "Europe",
+        "subregions": [
+          {
+            "name": "Western Europe",
+            "cuisines": ["French", "Belgian", "Dutch", "Luxembourgish"]
+          },
+          {
+            "name": "Southern Europe / Mediterranean",
+            "cuisines": ["Italian", "Spanish", "Portuguese", "Maltese", "Greek"]
+          },
+          {
+            "name": "Central Europe",
+            "cuisines": ["German", "Austrian", "Swiss", "Czech", "Slovak", "Hungarian", "Polish"]
+          },
+          {
+            "name": "Northern Europe",
+            "cuisines": ["English", "Scottish", "Welsh", "Irish", "Danish", "Swedish", "Norwegian", "Finnish", "Icelandic"]
+          },
+          {
+            "name": "Eastern / Balkan / Caucasus",
+            "cuisines": [
+              "Russian", "Ukrainian", "Belarusian",
+              "Serbian", "Croatian", "Bosnian", "Montenegrin", "Slovenian", "Albanian", "Macedonian", "Bulgarian", "Romanian",
+              "Georgian", "Armenian", "Baltic (Estonian, Latvian, Lithuanian)"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Middle East & Central Asia",
+        "subregions": [
+          {
+            "name": "Middle Eastern",
+            "cuisines": [
+              "Turkish", "Kurdish", "Persian", "Azerbaijani", "Iraqi", "Syrian", "Lebanese", "Palestinian",
+              "Jordanian", "Saudi", "Gulf Arabian", "Yemeni"
+            ]
+          },
+          {
+            "name": "Central Asian",
+            "cuisines": ["Afghan", "Uzbek", "Kazakh", "Tajik", "Turkmen"]
+          }
+        ]
+      },
+      {
+        "name": "South Asia",
+        "subregions": [
+          {
+            "name": "India (Regional)",
+            "cuisines": [
+              "Punjabi", "Gujarati", "Rajasthani", "Kashmiri", "Bengali", "Assamese",
+              "Goan", "Keralan", "Tamil", "Hyderabadi"
+            ]
+          },
+          {
+            "name": "Other South Asian",
+            "cuisines": ["Pakistani", "Bangladeshi", "Sri Lankan", "Nepali", "Bhutanese", "Maldivian"]
+          }
+        ]
+      },
+      {
+        "name": "East Asia",
+        "subregions": [
+          {
+            "name": "Chinese (Regional)",
+            "cuisines": [
+              "Cantonese", "Sichuan", "Hunan", "Fujian", "Shandong", "Anhui", "Jiangsu",
+              "Beijing Cuisine", "Dongbei (Northeast)"
+            ]
+          },
+          {
+            "name": "Japan",
+            "cuisines": ["Kanto", "Kansai", "Okinawan"]
+          },
+          {
+            "name": "Korea",
+            "cuisines": ["Seoul", "Jeolla", "Gyeongsang"]
+          },
+          {
+            "name": "Other East Asian",
+            "cuisines": ["Taiwanese", "Mongolian"]
+          }
+        ]
+      },
+      {
+        "name": "Southeast Asia",
+        "subregions": [
+          {
+            "name": "Mainland",
+            "cuisines": ["Thai", "Vietnamese", "Cambodian", "Laotian", "Burmese"]
+          },
+          {
+            "name": "Maritime",
+            "cuisines": ["Indonesian", "Malaysian", "Singaporean", "Filipino", "Bruneian", "Timorese"]
+          }
+        ]
+      },
+      {
+        "name": "Oceania / Pacific",
+        "subregions": [
+          {
+            "name": "Australia & New Zealand",
+            "cuisines": ["Australian", "New Zealand", "Māori"]
+          },
+          {
+            "name": "Pacific Islands",
+            "cuisines": ["Hawaiian", "Samoan", "Tongan", "Fijian", "Papua New Guinean", "Tahitian"]
+          }
+        ]
+      },
+      {
+        "name": "The Americas",
+        "subregions": [
+          {
+            "name": "North America",
+            "cuisines": [
+              "American (Southern, Cajun, Creole, Tex-Mex, Californian, Pacific Northwest, New England)",
+              "Canadian", "Quebecois"
+            ]
+          },
+          {
+            "name": "Mexico",
+            "cuisines": ["Oaxacan", "Yucatecan", "Central Mexican", "Baja", "Northern Mexican"]
+          },
+          {
+            "name": "Central America",
+            "cuisines": ["Guatemalan", "Honduran", "Salvadoran", "Nicaraguan", "Costa Rican", "Panamanian"]
+          },
+          {
+            "name": "Caribbean",
+            "cuisines": ["Jamaican", "Trinidadian", "Haitian", "Cuban", "Puerto Rican", "Dominican", "Barbadian", "Bahamian"]
+          },
+          {
+            "name": "South America",
+            "cuisines": ["Brazilian", "Argentinian", "Chilean", "Colombian", "Peruvian", "Venezuelan", "Ecuadorian", "Bolivian", "Paraguayan", "Uruguayan"]
+          }
+        ]
+      }
+    ]
+  }
 
   // Resize image to ~1024px longest edge to reduce token cost
   const resizeImage = (file, maxDimension = 1024) => {
@@ -115,6 +292,73 @@ function App() {
     }))
   }
 
+  const handleCuisineToggle = (cuisine) => {
+    setSelectedCuisines(prev => {
+      if (prev.includes(cuisine)) {
+        return prev.filter(c => c !== cuisine)
+      } else {
+        return [...prev, cuisine]
+      }
+    })
+  }
+
+  // Diet preferences list for filtering
+  const dietPreferencesList = [
+    { key: 'vegan', label: 'Vegan' },
+    { key: 'vegetarian', label: 'Vegetarian' },
+    { key: 'spicy', label: 'Spicy' },
+    { key: 'lowCarb', label: 'Low-Carb' },
+    { key: 'glutenFree', label: 'Gluten-Free' },
+    { key: 'dairyFree', label: 'Dairy-Free' },
+    { key: 'halal', label: 'Halal' },
+    { key: 'kosher', label: 'Kosher' }
+  ]
+
+  // Filter diet preferences based on search query
+  const filteredDietPreferences = dietPreferencesList.filter(pref =>
+    pref.label.toLowerCase().includes(dietSearchQuery.toLowerCase())
+  )
+
+  // Filter cuisine regions based on search query
+  const filterCuisineRegions = (regions, searchQuery) => {
+    if (!searchQuery.trim()) {
+      return regions
+    }
+
+    const query = searchQuery.toLowerCase().trim()
+    const filtered = []
+
+    regions.forEach(region => {
+      const regionMatches = region.name.toLowerCase().includes(query)
+      const matchingSubregions = []
+
+      region.subregions.forEach(subregion => {
+        const subregionMatches = subregion.name.toLowerCase().includes(query)
+        const matchingCuisines = subregion.cuisines.filter(cuisine =>
+          cuisine.toLowerCase().includes(query)
+        )
+
+        if (subregionMatches || matchingCuisines.length > 0) {
+          matchingSubregions.push({
+            ...subregion,
+            cuisines: subregionMatches ? subregion.cuisines : matchingCuisines
+          })
+        }
+      })
+
+      if (regionMatches || matchingSubregions.length > 0) {
+        filtered.push({
+          ...region,
+          subregions: regionMatches ? region.subregions : matchingSubregions
+        })
+      }
+    })
+
+    return filtered
+  }
+
+  const filteredCuisineRegions = filterCuisineRegions(cuisineRegions.regions, cuisineSearchQuery)
+
   const handleAnalyze = async () => {
     if (!image) {
       setError('Please upload an image first')
@@ -133,7 +377,10 @@ function App() {
       // Prepare form data
       const formData = new FormData()
       formData.append('image', image)
-      formData.append('preferences', JSON.stringify(preferences))
+      formData.append('preferences', JSON.stringify({
+        ...preferences,
+        cuisineRegions: selectedCuisines
+      }))
       
       // Get API URL from environment or use default
       const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000'
@@ -181,6 +428,9 @@ function App() {
     setShoppingSuggestions(null)
     setError(null)
     setLoading(false)
+    setSelectedCuisines([])
+    setDietSearchQuery('')
+    setCuisineSearchQuery('')
   }
 
   const getEcoScoreColor = (score) => {
@@ -225,59 +475,84 @@ function App() {
             onClick={() => setShowPreferences(!showPreferences)}
             className="preferences-toggle"
           >
-            {showPreferences ? '▼' : '▶'} Taste Preferences
+            {showPreferences ? '▼' : '▶'} Diet Preferences
           </button>
           {showPreferences && (
             <div className="preferences-panel">
+              <div className="search-container">
+                <input
+                  type="text"
+                  placeholder="Search diet preferences..."
+                  value={dietSearchQuery}
+                  onChange={(e) => setDietSearchQuery(e.target.value)}
+                  className="preferences-search-input"
+                />
+              </div>
               <div className="preferences-grid">
-                <label className="preference-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={preferences.vegan}
-                    onChange={() => handlePreferenceChange('vegan')}
-                  />
-                  <span> Vegan</span>
-                </label>
-                <label className="preference-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={preferences.vegetarian}
-                    onChange={() => handlePreferenceChange('vegetarian')}
-                  />
-                  <span> Vegetarian</span>
-                </label>
-                <label className="preference-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={preferences.spicy}
-                    onChange={() => handlePreferenceChange('spicy')}
-                  />
-                  <span> Spicy</span>
-                </label>
-                <label className="preference-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={preferences.lowCarb}
-                    onChange={() => handlePreferenceChange('lowCarb')}
-                  />
-                  <span> Low-Carb</span>
-                </label>
-                <label className="preference-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={preferences.glutenFree}
-                    onChange={() => handlePreferenceChange('glutenFree')}
-                  />
-                  <span> Gluten-Free</span>
-                </label>
-                <label className="preference-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={preferences.dairyFree}
-                    onChange={() => handlePreferenceChange('dairyFree')}
-                  />
-                  <span> Dairy-Free</span>
-                </label>
+                {filteredDietPreferences.length > 0 ? (
+                  filteredDietPreferences.map((pref) => (
+                    <label key={pref.key} className="preference-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={preferences[pref.key]}
+                        onChange={() => handlePreferenceChange(pref.key)}
+                      />
+                      <span> {pref.label}</span>
+                    </label>
+                  ))
+                ) : (
+                  <div className="no-results">No preferences found matching "{dietSearchQuery}"</div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="preferences-section">
+          <button 
+            onClick={() => setShowCuisineRegions(!showCuisineRegions)}
+            className="preferences-toggle"
+          >
+            {showCuisineRegions ? '▼' : '▶'} Cuisine Regions
+          </button>
+          {showCuisineRegions && (
+            <div className="preferences-panel">
+              <div className="search-container">
+                <input
+                  type="text"
+                  placeholder="Search cuisine regions, subregions, or cuisines..."
+                  value={cuisineSearchQuery}
+                  onChange={(e) => setCuisineSearchQuery(e.target.value)}
+                  className="preferences-search-input"
+                />
+              </div>
+              <div className="cuisine-regions-container">
+                {filteredCuisineRegions.length > 0 ? (
+                  filteredCuisineRegions.map((region, regionIndex) => (
+                    <div key={regionIndex} className="cuisine-region">
+                      <h3 className="cuisine-region-name">{region.name}</h3>
+                      {region.subregions.map((subregion, subregionIndex) => (
+                        <div key={subregionIndex} className="cuisine-subregion">
+                          <h4 className="cuisine-subregion-name">{subregion.name}</h4>
+                          <div className="cuisines-list">
+                            {subregion.cuisines.map((cuisine, cuisineIndex) => (
+                              <label key={cuisineIndex} className="cuisine-checkbox">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedCuisines.includes(cuisine)}
+                                  onChange={() => handleCuisineToggle(cuisine)}
+                                />
+                                <span>{cuisine}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ))
+                ) : (
+                  <div className="no-results">No cuisines found matching "{cuisineSearchQuery}"</div>
+                )}
               </div>
             </div>
           )}

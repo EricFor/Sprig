@@ -232,8 +232,8 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  margin-left: 1rem;
   margin-bottom: 0.75rem;
+  margin-top: 0.5rem;
 }
 
 .cuisine-checkbox {

@@ -30,177 +30,57 @@ function App() {
     kosher: false
   })
 
-  // Cuisine regions data
+  // Cuisine regions data - organized by larger regional classifications
   const [selectedCuisines, setSelectedCuisines] = useState([])
   
-  const cuisineRegions = {
-    "regions": [
-      {
-        "name": "Africa",
-        "subregions": [
-          {
-            "name": "North Africa",
-            "cuisines": ["Moroccan", "Algerian", "Tunisian", "Libyan", "Egyptian"]
-          },
-          {
-            "name": "West Africa",
-            "cuisines": ["Nigerian", "Ghanaian", "Senegalese", "Ivorian", "Togolese", "Beninese"]
-          },
-          {
-            "name": "Central Africa",
-            "cuisines": ["Cameroonian", "Congolese", "Gabonese", "Chadian", "Central African"]
-          },
-          {
-            "name": "East Africa",
-            "cuisines": ["Ethiopian", "Eritrean", "Somalian", "Kenyan", "Tanzanian", "Ugandan"]
-          },
-          {
-            "name": "Southern Africa",
-            "cuisines": ["South African", "Zimbabwean", "Zambian", "Namibian", "Botswanan"]
-          }
-        ]
-      },
-      {
-        "name": "Europe",
-        "subregions": [
-          {
-            "name": "Western Europe",
-            "cuisines": ["French", "Belgian", "Dutch", "Luxembourgish"]
-          },
-          {
-            "name": "Southern Europe / Mediterranean",
-            "cuisines": ["Italian", "Spanish", "Portuguese", "Maltese", "Greek"]
-          },
-          {
-            "name": "Central Europe",
-            "cuisines": ["German", "Austrian", "Swiss", "Czech", "Slovak", "Hungarian", "Polish"]
-          },
-          {
-            "name": "Northern Europe",
-            "cuisines": ["English", "Scottish", "Welsh", "Irish", "Danish", "Swedish", "Norwegian", "Finnish", "Icelandic"]
-          },
-          {
-            "name": "Eastern / Balkan / Caucasus",
-            "cuisines": [
-              "Russian", "Ukrainian", "Belarusian",
-              "Serbian", "Croatian", "Bosnian", "Montenegrin", "Slovenian", "Albanian", "Macedonian", "Bulgarian", "Romanian",
-              "Georgian", "Armenian", "Baltic (Estonian, Latvian, Lithuanian)"
-            ]
-          }
-        ]
-      },
-      {
-        "name": "Middle East & Central Asia",
-        "subregions": [
-          {
-            "name": "Middle Eastern",
-            "cuisines": [
-              "Turkish", "Kurdish", "Persian", "Azerbaijani", "Iraqi", "Syrian", "Lebanese", "Palestinian",
-              "Jordanian", "Saudi", "Gulf Arabian", "Yemeni"
-            ]
-          },
-          {
-            "name": "Central Asian",
-            "cuisines": ["Afghan", "Uzbek", "Kazakh", "Tajik", "Turkmen"]
-          }
-        ]
-      },
-      {
-        "name": "South Asia",
-        "subregions": [
-          {
-            "name": "India (Regional)",
-            "cuisines": [
-              "Punjabi", "Gujarati", "Rajasthani", "Kashmiri", "Bengali", "Assamese",
-              "Goan", "Keralan", "Tamil", "Hyderabadi"
-            ]
-          },
-          {
-            "name": "Other South Asian",
-            "cuisines": ["Pakistani", "Bangladeshi", "Sri Lankan", "Nepali", "Bhutanese", "Maldivian"]
-          }
-        ]
-      },
-      {
-        "name": "East Asia",
-        "subregions": [
-          {
-            "name": "Chinese (Regional)",
-            "cuisines": [
-              "Cantonese", "Sichuan", "Hunan", "Fujian", "Shandong", "Anhui", "Jiangsu",
-              "Beijing Cuisine", "Dongbei (Northeast)"
-            ]
-          },
-          {
-            "name": "Japan",
-            "cuisines": ["Kanto", "Kansai", "Okinawan"]
-          },
-          {
-            "name": "Korea",
-            "cuisines": ["Seoul", "Jeolla", "Gyeongsang"]
-          },
-          {
-            "name": "Other East Asian",
-            "cuisines": ["Taiwanese", "Mongolian"]
-          }
-        ]
-      },
-      {
-        "name": "Southeast Asia",
-        "subregions": [
-          {
-            "name": "Mainland",
-            "cuisines": ["Thai", "Vietnamese", "Cambodian", "Laotian", "Burmese"]
-          },
-          {
-            "name": "Maritime",
-            "cuisines": ["Indonesian", "Malaysian", "Singaporean", "Filipino", "Bruneian", "Timorese"]
-          }
-        ]
-      },
-      {
-        "name": "Oceania / Pacific",
-        "subregions": [
-          {
-            "name": "Australia & New Zealand",
-            "cuisines": ["Australian", "New Zealand", "Māori"]
-          },
-          {
-            "name": "Pacific Islands",
-            "cuisines": ["Hawaiian", "Samoan", "Tongan", "Fijian", "Papua New Guinean", "Tahitian"]
-          }
-        ]
-      },
-      {
-        "name": "The Americas",
-        "subregions": [
-          {
-            "name": "North America",
-            "cuisines": [
-              "American (Southern, Cajun, Creole, Tex-Mex, Californian, Pacific Northwest, New England)",
-              "Canadian", "Quebecois"
-            ]
-          },
-          {
-            "name": "Mexico",
-            "cuisines": ["Oaxacan", "Yucatecan", "Central Mexican", "Baja", "Northern Mexican"]
-          },
-          {
-            "name": "Central America",
-            "cuisines": ["Guatemalan", "Honduran", "Salvadoran", "Nicaraguan", "Costa Rican", "Panamanian"]
-          },
-          {
-            "name": "Caribbean",
-            "cuisines": ["Jamaican", "Trinidadian", "Haitian", "Cuban", "Puerto Rican", "Dominican", "Barbadian", "Bahamian"]
-          },
-          {
-            "name": "South America",
-            "cuisines": ["Brazilian", "Argentinian", "Chilean", "Colombian", "Peruvian", "Venezuelan", "Ecuadorian", "Bolivian", "Paraguayan", "Uruguayan"]
-          }
-        ]
-      }
-    ]
-  }
+  const cuisineRegions = [
+    {
+      name: "Asian",
+      cuisines: [
+        "Chinese", "Japanese", "Indian", "Thai", "Korean", "Vietnamese",
+        "Indonesian", "Malaysian", "Singaporean", "Filipino", "Cambodian",
+        "Laotian", "Burmese", "Pakistani", "Bangladeshi", "Sri Lankan",
+        "Nepali", "Taiwanese", "Mongolian", "Afghan", "Uzbek", "Kazakh"
+      ]
+    },
+    {
+      name: "American",
+      cuisines: [
+        "Mexican", "Brazilian", "Argentinian", "American", "Canadian",
+        "Cuban", "Jamaican", "Caribbean", "Cajun", "Creole", "Tex-Mex",
+        "Chilean", "Colombian", "Venezuelan", "Ecuadorian", "Guatemalan",
+        "Costa Rican", "Peruvian"
+      ]
+    },
+    {
+      name: "African",
+      cuisines: [
+        "Moroccan", "Ethiopian", "South African", "Nigerian", "Ghanaian",
+        "Senegalese", "Kenyan", "Tanzanian", "Tunisian", "Algerian", "Egyptian"
+      ]
+    },
+    {
+      name: "European",
+      cuisines: [
+        "Italian", "French", "Spanish", "German", "British", "Portuguese",
+        "Russian", "Polish", "Greek", "Irish", "Scottish", "Swiss",
+        "Austrian", "Belgian", "Dutch", "Hungarian", "Romanian", "Bulgarian",
+        "Ukrainian", "Georgian", "Armenian", "Mediterranean", "Scandinavian"
+      ]
+    },
+    {
+      name: "Middle Eastern",
+      cuisines: [
+        "Turkish", "Middle Eastern", "Lebanese", "Persian", "Israeli"
+      ]
+    },
+    {
+      name: "Oceanian",
+      cuisines: [
+        "Australian", "New Zealand", "Hawaiian"
+      ]
+    }
+  ]
 
   // Resize image to ~1024px longest edge to reduce token cost
   const resizeImage = (file, maxDimension = 1024) => {
@@ -330,26 +210,14 @@ function App() {
 
     regions.forEach(region => {
       const regionMatches = region.name.toLowerCase().includes(query)
-      const matchingSubregions = []
+      const matchingCuisines = region.cuisines.filter(cuisine =>
+        cuisine.toLowerCase().includes(query)
+      )
 
-      region.subregions.forEach(subregion => {
-        const subregionMatches = subregion.name.toLowerCase().includes(query)
-        const matchingCuisines = subregion.cuisines.filter(cuisine =>
-          cuisine.toLowerCase().includes(query)
-        )
-
-        if (subregionMatches || matchingCuisines.length > 0) {
-          matchingSubregions.push({
-            ...subregion,
-            cuisines: subregionMatches ? subregion.cuisines : matchingCuisines
-          })
-        }
-      })
-
-      if (regionMatches || matchingSubregions.length > 0) {
+      if (regionMatches || matchingCuisines.length > 0) {
         filtered.push({
           ...region,
-          subregions: regionMatches ? region.subregions : matchingSubregions
+          cuisines: regionMatches ? region.cuisines : matchingCuisines
         })
       }
     })
@@ -357,7 +225,7 @@ function App() {
     return filtered
   }
 
-  const filteredCuisineRegions = filterCuisineRegions(cuisineRegions.regions, cuisineSearchQuery)
+  const filteredCuisineRegions = filterCuisineRegions(cuisineRegions, cuisineSearchQuery)
 
   const handleAnalyze = async () => {
     if (!image) {
@@ -520,7 +388,7 @@ function App() {
               <div className="search-container">
                 <input
                   type="text"
-                  placeholder="Search cuisine regions, subregions, or cuisines..."
+                  placeholder="Search regions or cuisines..."
                   value={cuisineSearchQuery}
                   onChange={(e) => setCuisineSearchQuery(e.target.value)}
                   className="preferences-search-input"
@@ -531,23 +399,18 @@ function App() {
                   filteredCuisineRegions.map((region, regionIndex) => (
                     <div key={regionIndex} className="cuisine-region">
                       <h3 className="cuisine-region-name">{region.name}</h3>
-                      {region.subregions.map((subregion, subregionIndex) => (
-                        <div key={subregionIndex} className="cuisine-subregion">
-                          <h4 className="cuisine-subregion-name">{subregion.name}</h4>
-                          <div className="cuisines-list">
-                            {subregion.cuisines.map((cuisine, cuisineIndex) => (
-                              <label key={cuisineIndex} className="cuisine-checkbox">
-                                <input
-                                  type="checkbox"
-                                  checked={selectedCuisines.includes(cuisine)}
-                                  onChange={() => handleCuisineToggle(cuisine)}
-                                />
-                                <span>{cuisine}</span>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
+                      <div className="cuisines-list">
+                        {region.cuisines.map((cuisine, cuisineIndex) => (
+                          <label key={cuisineIndex} className="cuisine-checkbox">
+                            <input
+                              type="checkbox"
+                              checked={selectedCuisines.includes(cuisine)}
+                              onChange={() => handleCuisineToggle(cuisine)}
+                            />
+                            <span>{cuisine}</span>
+                          </label>
+                        ))}
+                      </div>
                     </div>
                   ))
                 ) : (

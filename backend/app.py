@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 import base64
 import io
@@ -13,7 +13,6 @@ import numpy as np
 from openai import OpenAI
 import re
 from pathlib import Path
-from inflect import engine
 from dotenv import load_dotenv, find_dotenv
 
 # Load environment variables from .env file
@@ -47,59 +46,10 @@ FALLBACK_MODEL = os.getenv("DEDALUS_MODEL_FALLBACK", os.getenv("OPENAI_MODEL_FAL
 USE_FALLBACK = os.getenv("USE_FALLBACK_MODEL", "false").lower() == "true"
 
 # Default confidence threshold
-DEFAULT_MIN_CONFIDENCE = 0.85
+DEFAULT_MIN_CONFIDENCE = 0.50
 DEFAULT_TOP_K = None  # No limit by default
 
-# Initialize inflect engine for singularization
-inflect_engine = engine()
-
-# Alias mapping for ingredient normalization
-INGREDIENT_ALIASES = {
-    "scallion": "green onion",
-    "green onion": "green onion",
-    "spring onion": "green onion",
-    "scallions": "green onion",
-    "green onions": "green onion",
-    "bell pepper": "bell pepper",
-    "bell peppers": "bell pepper",
-    "sweet pepper": "bell pepper",
-    "red pepper": "bell pepper",
-    "yellow pepper": "bell pepper",
-    "tomato": "tomato",
-    "tomatoes": "tomato",
-    "cherry tomato": "tomato",
-    "cherry tomatoes": "tomato",
-    "carrot": "carrot",
-    "carrots": "carrot",
-    "lettuce": "lettuce",
-    "leaf lettuce": "lettuce",
-    "iceberg lettuce": "lettuce",
-    "onion": "onion",
-    "onions": "onion",
-    "yellow onion": "onion",
-    "white onion": "onion",
-    "red onion": "onion",
-    "egg": "egg",
-    "eggs": "egg",
-    "chicken": "chicken",
-    "chicken breast": "chicken",
-    "chicken thigh": "chicken",
-    "beef": "beef",
-    "ground beef": "beef",
-    "milk": "milk",
-    "whole milk": "milk",
-    "skim milk": "milk",
-    "cheese": "cheese",
-    "cheddar cheese": "cheese",
-    "mozzarella": "cheese",
-    "mozzarella cheese": "cheese",
-    "butter": "butter",
-    "yogurt": "yogurt",
-    "greek yogurt": "yogurt",
-    "bread": "bread",
-    "white bread": "bread",
-    "whole wheat bread": "bread",
-}
+# Ingredient aliases removed to preserve ingredient differentiation
 
 # Deny list for non-ingredient items
 NON_INGREDIENT_DENY_LIST = {
@@ -116,7 +66,7 @@ QUANTITY_ADJECTIVES = {
     "fresh", "old", "new", "expired", "rotten", "spoiled", "good", "bad",
     "full", "empty", "half", "whole", "partial", "leftover", "remaining",
     "some", "many", "few", "several", "multiple", "various", "different",
-    "red", "green", "yellow", "orange", "blue", "purple", "white", "black",
+
     "raw", "cooked", "frozen", "thawed", "warm", "cold", "hot", "cool",
 }
 
@@ -169,12 +119,15 @@ def optimize_image_size(image_pil: Image.Image, max_dimension: int = 1024) -> Im
     
     return image_pil
 
-def image_to_base64(image_pil: Image.Image, format: str = "JPEG") -> str:
+def image_to_base64(image_pil: Image.Image, format: str = "JPEG", quality: int = 90) -> str:
     """
     Convert PIL Image to base64 string for API.
+    Saves as JPEG with quality 85-92% (default 90%) for optimal file size/quality balance.
     """
     buffer = io.BytesIO()
-    image_pil.save(buffer, format=format)
+    # Save with optimized quality (85-92% range)
+    quality = max(85, min(92, quality))
+    image_pil.save(buffer, format=format, quality=quality, optimize=True)
     image_bytes = buffer.getvalue()
     return base64.b64encode(image_bytes).decode('utf-8')
 
@@ -184,13 +137,13 @@ def classify_image_with_openai(image_base64: str, model: str = PRIMARY_MODEL) ->
     """
     system_message = """You are an expert at identifying food ingredients in refrigerator images.
 
-Your task is to identify ONLY actual food ingredients, packaging, or utensils.
+Your task is to identify ONLY actual food ingredients. Do not include any non-food items.
 
 Rules:
 1. Return ONLY a valid JSON object with this exact structure:
    {
      "ingredients": [
-       {"name": "ingredient_name", "confidence": 0.95}
+       {"name": "ingredient_name", "confidence": "confidence_score_between_0.00_and_1.00"}
      ],
      "notes": "optional brief context"
    }
@@ -199,22 +152,29 @@ Rules:
    - Brand names (e.g., "Coca-Cola", "Heinz")
    - bags, packaging, utensils
    - Vague labels like "food", "stuff", "things"
-   - Any item you are less than 75% confident about
+   - Any item you are less than 0.50 confident about
+   - Any non-food items
 
-3. Only include ingredients you can clearly identify with high confidence (≥0.90).
+3. Only include ingredients you can clearly identify with medium-high confidence (≥0.50).
 
 4. Use common ingredient names (e.g., "tomato" not "ripe red tomato", "chicken" not "organic chicken breast").
 
 5. Return ingredients as singular nouns when possible (e.g., "egg" not "eggs", "tomato" not "tomatoes").
 
-6. Do not include confidence scores below 0.75.
+6. Do not include confidence scores below 0.50 confidence score.
 
-7. Return ONLY valid JSON, no markdown, no code blocks, no explanations outside the JSON structure."""
+7. Return ONLY valid JSON, no markdown, no blank spaces, no code blocks, no explanations outside the JSON structure.
+
+8. Return a continuous confidence score for each ingredient from 0.00 to 1.00, no percentage signs or other symbols. Include only two decimal places.
+
+9. For any packaged ingredients, use visible labels to identify the ingredient. Do not include the brand name in the ingredient name."""
+
+
 
     user_message = """Analyze this refrigerator image and identify all visible food ingredients.
 
 Return ONLY a JSON object with the structure specified in the system message.
-Include only ingredients you can identify with high confidence (≥0.75)."""
+Include only ingredients you can identify with high confidence (≥0.50)."""
 
     try:
         # Note: response_format may not be supported for vision models in all cases
@@ -280,45 +240,16 @@ Include only ingredients you can identify with high confidence (≥0.75)."""
 
 def normalize_ingredient_name(name: str) -> str:
     """
-    Normalize ingredient name: lowercase, remove adjectives, singularize.
+    Normalize ingredient name: minimal processing to preserve differentiation.
+    Only does basic cleaning: lowercase and strip whitespace.
+    No aliasing, singularization, or adjective removal to preserve ingredient variants.
     """
-    # Convert to lowercase
+    # Only do minimal normalization: lowercase and strip
+    # This preserves ingredient differentiation (e.g., "cherry tomato" vs "tomato")
     normalized = name.lower().strip()
-    
-    # Remove common prefixes/suffixes and adjectives
-    words = normalized.split()
-    filtered_words = []
-    
-    for word in words:
-        # Skip quantity/quality adjectives
-        if word not in QUANTITY_ADJECTIVES:
-            filtered_words.append(word)
-    
-    normalized = " ".join(filtered_words)
     
     # Remove special characters except spaces and hyphens
     normalized = re.sub(r'[^\w\s-]', '', normalized)
-    
-    # Singularize (convert plural to singular)
-    try:
-        # Use inflect to singularize
-        words = normalized.split()
-        singularized_words = []
-        for word in words:
-            # Try to singularize each word
-            singular = inflect_engine.singular_noun(word)
-            if singular:
-                singularized_words.append(singular)
-            else:
-                singularized_words.append(word)
-        normalized = " ".join(singularized_words)
-    except Exception:
-        # If singularization fails, keep original
-        pass
-    
-    # Apply alias mapping
-    if normalized in INGREDIENT_ALIASES:
-        normalized = INGREDIENT_ALIASES[normalized]
     
     return normalized.strip()
 
@@ -343,7 +274,7 @@ def filter_non_ingredients(ingredient_name: str) -> bool:
 
 def post_process_ingredients(raw_ingredients: List[Dict[str, Any]], min_confidence: float = DEFAULT_MIN_CONFIDENCE, top_k: Optional[int] = None) -> List[Dict[str, Any]]:
     """
-    Post-process ingredients: normalize, filter, deduplicate, apply confidence threshold.
+    Post-process ingredients: filter, deduplicate, apply confidence threshold.
     """
     processed = []
     seen_normalized = {}  # Map normalized name to best ingredient
@@ -367,17 +298,17 @@ def post_process_ingredients(raw_ingredients: List[Dict[str, Any]], min_confiden
         if not filter_non_ingredients(normalized_name):
             continue
         
-        # Deduplicate: keep highest confidence
+        # Deduplicate: keep highest confidence, but preserve original name
         if normalized_name not in seen_normalized:
             seen_normalized[normalized_name] = {
-                "name": normalized_name,
+                "name": name,  # Keep original name for differentiation
                 "confidence": confidence
             }
         else:
             # Update if this has higher confidence
             if confidence > seen_normalized[normalized_name]["confidence"]:
                 seen_normalized[normalized_name] = {
-                    "name": normalized_name,
+                    "name": name,  # Keep original name for differentiation
                     "confidence": confidence
                 }
     
@@ -413,17 +344,17 @@ def merge_ingredient_lists(ingredient_lists: List[List[Dict[str, Any]]], min_con
             if not filter_non_ingredients(normalized_name):
                 continue
             
-            # Deduplicate: keep highest confidence
+            # Deduplicate: keep highest confidence, but preserve original name
             if normalized_name not in merged:
                 merged[normalized_name] = {
-                    "name": normalized_name,
+                    "name": name,  # Keep original name for differentiation
                     "confidence": confidence
                 }
             else:
                 # Update if this has higher confidence
                 if confidence > merged[normalized_name]["confidence"]:
                     merged[normalized_name] = {
-                        "name": normalized_name,
+                        "name": name,  # Keep original name for differentiation
                         "confidence": confidence
                     }
     
@@ -445,7 +376,7 @@ def classify_fridge():
     
     Accepts:
     - One or more images (files with key 'images' or 'image')
-    - Optional: min_conf (float, default 0.90)
+    - Optional: min_conf (float, default 0.50)
     - Optional: top_k (int, default None)
     - Optional: image_urls (list of URLs, for remote images)
     
@@ -583,54 +514,43 @@ def classify_fridge():
         return jsonify({"error": f"Failed to classify image: {str(e)}"}), 500
 
 # Keep the old endpoint for backward compatibility, but route to new system
-@app.route('/api/analyze-fridge', methods=['POST'])
-def analyze_fridge():
+@app.route('/api/recalibrate-recipes', methods=['POST'])
+def recalibrate_recipes():
     """
-    Legacy endpoint - analyzes fridge and generates recipes.
-    Uses new classification system but maintains old API contract.
+    Generate recipes from existing ingredients list (without image).
+    Accepts JSON with ingredients list and preferences.
     """
     try:
-        # Get preferences if provided
-        preferences = {}
-        if 'preferences' in request.form:
-            preferences = json.loads(request.form['preferences'])
+        # Get JSON data
+        data = request.get_json()
         
-        # Use new classification endpoint logic
-        min_conf = float(request.form.get('min_conf', 0.80))  # Lower threshold for legacy endpoint
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
         
-        # Get image
-        if 'image' not in request.files:
-            return jsonify({"error": "No image provided"}), 400
+        # Get ingredients list
+        ingredients_list = data.get('ingredients', [])
+        if not ingredients_list:
+            return jsonify({"error": "No ingredients provided"}), 400
         
-        image_file = request.files['image']
-        if image_file.filename == '':
-            return jsonify({"error": "No image selected"}), 400
+        # Get preferences
+        preferences = data.get('preferences', {})
         
-        # Process image through new classification system
-        image_bytes = image_file.read()
-        image_pil = Image.open(io.BytesIO(image_bytes))
+        # Convert ingredient names to ingredient objects with confidence
+        ingredients = []
+        for ing_name in ingredients_list:
+            if isinstance(ing_name, str):
+                ingredients.append({
+                    "name": ing_name,
+                    "confidence": 0.95  # Default confidence for user-provided ingredients
+                })
+            else:
+                ingredients.append(ing_name)
         
-        # Validate and optimize
-        is_valid, error_msg = validate_image_quality(image_pil)
-        if not is_valid:
-            return jsonify({"error": error_msg}), 400
-        
-        image_pil = optimize_image_size(image_pil, max_dimension=1024)
-        image_base64 = image_to_base64(image_pil)
-        
-        # Classify using Dedalus Labs API
-        model = FALLBACK_MODEL if USE_FALLBACK else PRIMARY_MODEL
-        result = classify_image_with_openai(image_base64, model=model)
-        raw_ingredients = result.get("ingredients", [])
-        
-        # Post-process
-        ingredients = post_process_ingredients(raw_ingredients, min_confidence=min_conf)
-        
-        # Generate recipes using Gemini (keep existing recipe generation)
+        # Generate recipes using Gemini
         recipes = generate_recipes(ingredients, preferences)
         
         # Extract missing ingredients
-        detected_ingredient_names = [ing['name'].lower() for ing in ingredients]
+        detected_ingredient_names = [ing['name'].lower() if isinstance(ing, dict) else ing.lower() for ing in ingredients_list]
         missing_ingredients = []
         for recipe in recipes:
             for missing in recipe.get('missingIngredients', []):
@@ -648,10 +568,133 @@ def analyze_fridge():
         }), 200
         
     except Exception as e:
-        logger.error(f"Error in analyze_fridge: {str(e)}")
+        logger.error(f"Error in recalibrate_recipes: {str(e)}")
         import traceback
         traceback.print_exc()
-        return jsonify({"error": f"Failed to analyze image: {str(e)}"}), 500
+        return jsonify({"error": f"Failed to generate recipes: {str(e)}"}), 500
+
+def emit_progress(progress_callback, progress: int, message: str):
+    """Helper function to emit progress updates"""
+    progress_data = {
+        "progress": progress,
+        "message": message
+    }
+    progress_callback(progress_data)
+
+@app.route('/api/analyze-fridge', methods=['POST'])
+def analyze_fridge():
+    """
+    Analyzes fridge and generates recipes with progress updates.
+    Uses Server-Sent Events (SSE) to stream progress updates.
+    """
+    def generate():
+        try:
+            # Get preferences if provided
+            preferences = {}
+            if 'preferences' in request.form:
+                preferences = json.loads(request.form['preferences'])
+            
+            # Use new classification endpoint logic
+            min_conf = float(request.form.get('min_conf', 0.50))
+            
+            # Get image
+            if 'image' not in request.files:
+                yield f"data: {json.dumps({'error': 'No image provided', 'progress': 0})}\n\n"
+                return
+            
+            image_file = request.files['image']
+            if image_file.filename == '':
+                yield f"data: {json.dumps({'error': 'No image selected', 'progress': 0})}\n\n"
+                return
+            
+            # Progress: 5% - Reading image
+            yield f"data: {json.dumps({'progress': 5, 'message': 'Reading image...'})}\n\n"
+            time.sleep(0.1)  # Small delay for UI update
+            
+            # Process image through new classification system
+            image_bytes = image_file.read()
+            image_pil = Image.open(io.BytesIO(image_bytes))
+            
+            # Progress: 10% - Validating image quality
+            yield f"data: {json.dumps({'progress': 10, 'message': 'Validating image quality...'})}\n\n"
+            time.sleep(0.1)
+            
+            # Validate and optimize
+            is_valid, error_msg = validate_image_quality(image_pil)
+            if not is_valid:
+                yield f"data: {json.dumps({'error': error_msg, 'progress': 0})}\n\n"
+                return
+            
+            # Progress: 20% - Optimizing image
+            yield f"data: {json.dumps({'progress': 20, 'message': 'Optimizing image for analysis...'})}\n\n"
+            time.sleep(0.1)
+            
+            image_pil = optimize_image_size(image_pil, max_dimension=1024)
+            image_base64 = image_to_base64(image_pil, quality=90)
+            
+            # Progress: 30% - Analyzing image with AI
+            yield f"data: {json.dumps({'progress': 30, 'message': 'Analyzing image with AI vision model...'})}\n\n"
+            time.sleep(0.1)
+            
+            # Classify using Dedalus Labs API
+            model = FALLBACK_MODEL if USE_FALLBACK else PRIMARY_MODEL
+            result = classify_image_with_openai(image_base64, model=model)
+            raw_ingredients = result.get("ingredients", [])
+            
+            # Progress: 60% - Processing ingredients
+            yield f"data: {json.dumps({'progress': 60, 'message': f'Processing {len(raw_ingredients)} detected ingredients...'})}\n\n"
+            time.sleep(0.1)
+            
+            # Post-process
+            ingredients = post_process_ingredients(raw_ingredients, min_confidence=min_conf)
+            
+            # Progress: 70% - Generating recipes
+            yield f"data: {json.dumps({'progress': 70, 'message': 'Generating personalized recipes...'})}\n\n"
+            time.sleep(0.1)
+            
+            # Generate recipes using Gemini (keep existing recipe generation)
+            recipes = generate_recipes(ingredients, preferences)
+            
+            # Progress: 85% - Processing recipes
+            yield f"data: {json.dumps({'progress': 85, 'message': f'Processing {len(recipes)} recipe recommendations...'})}\n\n"
+            time.sleep(0.1)
+            
+            # Extract missing ingredients
+            detected_ingredient_names = [ing['name'].lower() for ing in ingredients]
+            missing_ingredients = []
+            for recipe in recipes:
+                for missing in recipe.get('missingIngredients', []):
+                    if missing not in missing_ingredients:
+                        missing_ingredients.append(missing)
+            
+            # Progress: 90% - Generating shopping suggestions
+            yield f"data: {json.dumps({'progress': 90, 'message': 'Generating shopping suggestions...'})}\n\n"
+            time.sleep(0.1)
+            
+            # Generate shopping suggestions
+            shopping_suggestions = generate_shopping_suggestions(missing_ingredients)
+            
+            # Progress: 100% - Complete
+            yield f"data: {json.dumps({'progress': 100, 'message': 'Analysis complete!'})}\n\n"
+            time.sleep(0.1)
+            
+            # Send final results
+            result_data = {
+                "ingredients": ingredients,
+                "recipes": recipes,
+                "missingIngredients": missing_ingredients,
+                "shoppingSuggestions": shopping_suggestions,
+                "complete": True
+            }
+            yield f"data: {json.dumps(result_data)}\n\n"
+            
+        except Exception as e:
+            logger.error(f"Error in analyze_fridge: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'error': f'Failed to analyze image: {str(e)}', 'progress': 0})}\n\n"
+    
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
 def generate_recipes(ingredients, preferences):
     """
@@ -682,8 +725,18 @@ def generate_recipes(ingredients, preferences):
             pref_strings.append("gluten-free")
         if preferences.get('dairyFree'):
             pref_strings.append("dairy-free")
+        if preferences.get('halal'):
+            pref_strings.append("halal")
+        if preferences.get('kosher'):
+            pref_strings.append("kosher")
         
         preferences_text = ", ".join(pref_strings) if pref_strings else "no specific dietary restrictions"
+        
+        # Add cuisine regions if provided
+        cuisine_regions = preferences.get('cuisineRegions', [])
+        cuisine_text = ""
+        if cuisine_regions and len(cuisine_regions) > 0:
+            cuisine_text = f"\n\nPreferred cuisine styles: {', '.join(cuisine_regions)}. Prioritize recipes from these cuisines when possible."
         
         # Use Gemini for recipe generation (optional - can be replaced with OpenAI)
         try:
@@ -704,7 +757,13 @@ def generate_recipes(ingredients, preferences):
             # Create prompt for recipe generation
             prompt = f"""Generate 4 recipe recommendations based on these available ingredients: {', '.join(ingredient_names)}.
 
-User preferences: {preferences_text}
+User dietary preferences: {preferences_text}{cuisine_text}
+
+IMPORTANT: Prioritize recipes that can be made PRIMARILY or ENTIRELY with the available ingredients. 
+- Include at least 2 recipes that require NO additional ingredients (or only common pantry staples like salt, pepper, oil)
+- Include recipes that maximize use of the available ingredients
+- Only suggest missing ingredients that are absolutely necessary and not common pantry items
+- If cuisine preferences are specified, prioritize recipes from those cuisines
 
 For each recipe, provide:
 1. A creative and appealing recipe name
@@ -728,7 +787,8 @@ Return ONLY a valid JSON array with this exact structure (no markdown, no code b
   }}
 ]
 
-Make sure the recipes are practical, use the available ingredients creatively, and respect the user's dietary preferences. The availableIngredients should be a subset of the provided ingredients list."""
+Make sure the recipes are practical, use the available ingredients creatively, and respect the user's dietary preferences and cuisine preferences. The availableIngredients should be a subset of the provided ingredients list.
+PRIORITIZE recipes that can be made with the available ingredients with minimal or no additional purchases."""
             
             # Call Gemini API
             headers = {'Content-Type': 'application/json'}
@@ -777,7 +837,7 @@ Make sure the recipes are practical, use the available ingredients creatively, a
                 recipes = [recipes]
             
             logger.info(f"Successfully generated {len(recipes)} recipes")
-            return recipes[:4]  # Limit to 4 recipes
+            return recipes[:10]  # Limit to 10 recipes
             
         except Exception as recipe_error:
             logger.error(f"Error generating recipes with Gemini: {str(recipe_error)}")

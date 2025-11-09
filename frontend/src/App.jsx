@@ -13,17 +13,77 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [showPreferences, setShowPreferences] = useState(false)
+  const [showCuisineRegions, setShowCuisineRegions] = useState(false)
   const [activeTab, setActiveTab] = useState('ingredients')
+  const [dietSearchQuery, setDietSearchQuery] = useState('')
+  const [cuisineSearchQuery, setCuisineSearchQuery] = useState('')
+  const [newIngredient, setNewIngredient] = useState('')
+  const [progress, setProgress] = useState(0)
+  const [progressMessage, setProgressMessage] = useState('')
   
-  // User taste preferences
+  // User diet preferences
   const [preferences, setPreferences] = useState({
     vegan: false,
     vegetarian: false,
     spicy: false,
     lowCarb: false,
     glutenFree: false,
-    dairyFree: false
+    dairyFree: false,
+    halal: false,
+    kosher: false
   })
+
+  // Cuisine regions data - organized by larger regional classifications
+  const [selectedCuisines, setSelectedCuisines] = useState([])
+  
+  const cuisineRegions = [
+    {
+      name: "Asian",
+      cuisines: [
+        "Chinese", "Japanese", "Indian", "Thai", "Korean", "Vietnamese",
+        "Indonesian", "Malaysian", "Singaporean", "Filipino", "Cambodian",
+        "Laotian", "Burmese", "Pakistani", "Bangladeshi", "Sri Lankan",
+        "Nepali", "Taiwanese", "Mongolian", "Afghan", "Uzbek", "Kazakh"
+      ]
+    },
+    {
+      name: "American",
+      cuisines: [
+        "Mexican", "Brazilian", "Argentinian", "American", "Canadian",
+        "Cuban", "Jamaican", "Caribbean", "Cajun", "Creole", "Tex-Mex",
+        "Chilean", "Colombian", "Venezuelan", "Ecuadorian", "Guatemalan",
+        "Costa Rican", "Peruvian"
+      ]
+    },
+    {
+      name: "African",
+      cuisines: [
+        "Moroccan", "Ethiopian", "South African", "Nigerian", "Ghanaian",
+        "Senegalese", "Kenyan", "Tanzanian", "Tunisian", "Algerian", "Egyptian"
+      ]
+    },
+    {
+      name: "European",
+      cuisines: [
+        "Italian", "French", "Spanish", "German", "British", "Portuguese",
+        "Russian", "Polish", "Greek", "Irish", "Scottish", "Swiss",
+        "Austrian", "Belgian", "Dutch", "Hungarian", "Romanian", "Bulgarian",
+        "Ukrainian", "Georgian", "Armenian", "Mediterranean", "Scandinavian"
+      ]
+    },
+    {
+      name: "Middle Eastern",
+      cuisines: [
+        "Turkish", "Middle Eastern", "Lebanese", "Persian", "Israeli"
+      ]
+    },
+    {
+      name: "Oceanian",
+      cuisines: [
+        "Australian", "New Zealand", "Hawaiian"
+      ]
+    }
+  ]
 
   // Resize image to ~1024px longest edge to reduce token cost
   const resizeImage = (file, maxDimension = 1024) => {
@@ -115,6 +175,61 @@ function App() {
     }))
   }
 
+  const handleCuisineToggle = (cuisine) => {
+    setSelectedCuisines(prev => {
+      if (prev.includes(cuisine)) {
+        return prev.filter(c => c !== cuisine)
+      } else {
+        return [...prev, cuisine]
+      }
+    })
+  }
+
+  // Diet preferences list for filtering
+  const dietPreferencesList = [
+    { key: 'vegan', label: 'Vegan' },
+    { key: 'vegetarian', label: 'Vegetarian' },
+    { key: 'spicy', label: 'Spicy' },
+    { key: 'lowCarb', label: 'Low-Carb' },
+    { key: 'glutenFree', label: 'Gluten-Free' },
+    { key: 'dairyFree', label: 'Dairy-Free' },
+    { key: 'halal', label: 'Halal' },
+    { key: 'kosher', label: 'Kosher' }
+  ]
+
+  // Filter diet preferences based on search query
+  const filteredDietPreferences = dietPreferencesList.filter(pref =>
+    pref.label.toLowerCase().includes(dietSearchQuery.toLowerCase())
+  )
+
+  // Filter cuisine regions based on search query
+  const filterCuisineRegions = (regions, searchQuery) => {
+    if (!searchQuery.trim()) {
+      return regions
+    }
+
+    const query = searchQuery.toLowerCase().trim()
+    const filtered = []
+
+    regions.forEach(region => {
+      const regionMatches = region.name.toLowerCase().includes(query)
+      const matchingCuisines = region.cuisines.filter(cuisine =>
+        cuisine.toLowerCase().includes(query)
+      )
+
+      if (regionMatches || matchingCuisines.length > 0) {
+        filtered.push({
+          ...region,
+          cuisines: regionMatches ? region.cuisines : matchingCuisines
+        })
+      }
+    })
+
+    return filtered
+  }
+
+  const filteredCuisineRegions = filterCuisineRegions(cuisineRegions, cuisineSearchQuery)
+
   const handleAnalyze = async () => {
     if (!image) {
       setError('Please upload an image first')
@@ -123,6 +238,8 @@ function App() {
 
     setLoading(true)
     setError(null)
+    setProgress(0)
+    setProgressMessage('Starting analysis...')
     setIngredients(null)
     setMissingIngredients(null)
     setRecipes(null)
@@ -133,40 +250,79 @@ function App() {
       // Prepare form data
       const formData = new FormData()
       formData.append('image', image)
-      formData.append('preferences', JSON.stringify(preferences))
+      formData.append('preferences', JSON.stringify({
+        ...preferences,
+        cuisineRegions: selectedCuisines
+      }))
       
       // Get API URL from environment or use default
       const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000'
       
-      // Call the backend API
+      // Call the backend API with streaming support
       const response = await fetch(`${apiUrl}/api/analyze-fridge`, {
         method: 'POST',
         body: formData
       })
       
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
-        throw new Error(errorData.error || `Server error: ${response.status}`)
+        throw new Error(`Server error: ${response.status}`)
       }
-      
-      const data = await response.json()
-      
-      // Log the response for debugging
-      console.log('API Response:', data)
-      console.log('Ingredients:', data.ingredients)
-      console.log('Recipes:', data.recipes)
-      console.log('Missing Ingredients:', data.missingIngredients)
-      console.log('Shopping Suggestions:', data.shoppingSuggestions)
-      
-      // Update state with API response
-      setIngredients(data.ingredients || [])
-      setRecipes(data.recipes || [])
-      setMissingIngredients(data.missingIngredients || [])
-      setShoppingSuggestions(data.shoppingSuggestions || [])
+
+      // Read the stream
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        
+        if (done) {
+          break
+        }
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || '' // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              
+              // Handle progress updates
+              if (data.progress !== undefined) {
+                setProgress(data.progress)
+                if (data.message) {
+                  setProgressMessage(data.message)
+                }
+              }
+              
+              // Handle errors
+              if (data.error) {
+                throw new Error(data.error)
+              }
+              
+              // Handle final results
+              if (data.complete && data.ingredients) {
+                setIngredients(data.ingredients || [])
+                setRecipes(data.recipes || [])
+                setMissingIngredients(data.missingIngredients || [])
+                setShoppingSuggestions(data.shoppingSuggestions || [])
+                setProgress(100)
+                setProgressMessage('Analysis complete!')
+              }
+            } catch (parseError) {
+              console.error('Error parsing SSE data:', parseError, line)
+            }
+          }
+        }
+      }
       
     } catch (err) {
       console.error('Error analyzing fridge:', err)
       setError(err.message || 'Failed to analyze image. Please make sure the backend server is running.')
+      setProgress(0)
+      setProgressMessage('')
     } finally {
       setLoading(false)
     }
@@ -181,6 +337,105 @@ function App() {
     setShoppingSuggestions(null)
     setError(null)
     setLoading(false)
+    setProgress(0)
+    setProgressMessage('')
+    setSelectedCuisines([])
+    setDietSearchQuery('')
+    setCuisineSearchQuery('')
+    setNewIngredient('')
+  }
+
+  const handleAddIngredient = () => {
+    if (newIngredient.trim() && ingredients) {
+      const ingredientName = newIngredient.trim()
+      // Check if ingredient already exists
+      const existingNames = ingredients.map(ing => 
+        typeof ing === 'string' ? ing.toLowerCase() : ing.name.toLowerCase()
+      )
+      if (!existingNames.includes(ingredientName.toLowerCase())) {
+        // Add new ingredient marked as user-inputted
+        const newIng = {
+          name: ingredientName,
+          userInputted: true // Flag to identify user-added ingredients
+        }
+        setIngredients([...ingredients, newIng])
+        setNewIngredient('')
+      } else {
+        setError('Ingredient already exists')
+        setTimeout(() => setError(null), 2000)
+      }
+    }
+  }
+
+  const handleRemoveIngredient = (index) => {
+    const updatedIngredients = ingredients.filter((_, i) => i !== index)
+    setIngredients(updatedIngredients)
+  }
+
+  const handleRecalibrate = async () => {
+    if (!ingredients || ingredients.length === 0) {
+      setError('Please add at least one ingredient')
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+    setRecipes(null)
+    setMissingIngredients(null)
+    setShoppingSuggestions(null)
+
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+      
+      // Prepare ingredient names
+      const ingredientNames = ingredients.map(ing => 
+        typeof ing === 'string' ? ing : ing.name
+      )
+
+      // Call the recalibrate endpoint
+      const response = await fetch(`${apiUrl}/api/recalibrate-recipes`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ingredients: ingredientNames,
+          preferences: {
+            ...preferences,
+            cuisineRegions: selectedCuisines
+          }
+        })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+        throw new Error(errorData.error || `Server error: ${response.status}`)
+      }
+
+      const data = await response.json()
+
+      // Update state with new recipes
+      setRecipes(data.recipes || [])
+      setMissingIngredients(data.missingIngredients || [])
+      setShoppingSuggestions(data.shoppingSuggestions || [])
+      
+      // Switch to recipes tab
+      if (data.recipes && data.recipes.length > 0) {
+        setActiveTab('recipes')
+      }
+
+    } catch (err) {
+      console.error('Error recalibrating recipes:', err)
+      setError(err.message || 'Failed to generate recipes. Please make sure the backend server is running.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleIngredientKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      handleAddIngredient()
+    }
   }
 
   const getEcoScoreColor = (score) => {
@@ -225,59 +480,79 @@ function App() {
             onClick={() => setShowPreferences(!showPreferences)}
             className="preferences-toggle"
           >
-            {showPreferences ? '▼' : '▶'} Taste Preferences
+            {showPreferences ? '▼' : '▶'} Diet Preferences
           </button>
           {showPreferences && (
             <div className="preferences-panel">
+              <div className="search-container">
+                <input
+                  type="text"
+                  placeholder="Search diet preferences..."
+                  value={dietSearchQuery}
+                  onChange={(e) => setDietSearchQuery(e.target.value)}
+                  className="preferences-search-input"
+                />
+              </div>
               <div className="preferences-grid">
-                <label className="preference-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={preferences.vegan}
-                    onChange={() => handlePreferenceChange('vegan')}
-                  />
-                  <span> Vegan</span>
-                </label>
-                <label className="preference-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={preferences.vegetarian}
-                    onChange={() => handlePreferenceChange('vegetarian')}
-                  />
-                  <span> Vegetarian</span>
-                </label>
-                <label className="preference-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={preferences.spicy}
-                    onChange={() => handlePreferenceChange('spicy')}
-                  />
-                  <span> Spicy</span>
-                </label>
-                <label className="preference-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={preferences.lowCarb}
-                    onChange={() => handlePreferenceChange('lowCarb')}
-                  />
-                  <span> Low-Carb</span>
-                </label>
-                <label className="preference-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={preferences.glutenFree}
-                    onChange={() => handlePreferenceChange('glutenFree')}
-                  />
-                  <span> Gluten-Free</span>
-                </label>
-                <label className="preference-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={preferences.dairyFree}
-                    onChange={() => handlePreferenceChange('dairyFree')}
-                  />
-                  <span> Dairy-Free</span>
-                </label>
+                {filteredDietPreferences.length > 0 ? (
+                  filteredDietPreferences.map((pref) => (
+                    <label key={pref.key} className="preference-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={preferences[pref.key]}
+                        onChange={() => handlePreferenceChange(pref.key)}
+                      />
+                      <span> {pref.label}</span>
+                    </label>
+                  ))
+                ) : (
+                  <div className="no-results">No preferences found matching "{dietSearchQuery}"</div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="preferences-section">
+          <button 
+            onClick={() => setShowCuisineRegions(!showCuisineRegions)}
+            className="preferences-toggle"
+          >
+            {showCuisineRegions ? '▼' : '▶'} Cuisine Regions
+          </button>
+          {showCuisineRegions && (
+            <div className="preferences-panel">
+              <div className="search-container">
+                <input
+                  type="text"
+                  placeholder="Search regions or cuisines..."
+                  value={cuisineSearchQuery}
+                  onChange={(e) => setCuisineSearchQuery(e.target.value)}
+                  className="preferences-search-input"
+                />
+              </div>
+              <div className="cuisine-regions-container">
+                {filteredCuisineRegions.length > 0 ? (
+                  filteredCuisineRegions.map((region, regionIndex) => (
+                    <div key={regionIndex} className="cuisine-region">
+                      <h3 className="cuisine-region-name">{region.name}</h3>
+                      <div className="cuisines-list">
+                        {region.cuisines.map((cuisine, cuisineIndex) => (
+                          <label key={cuisineIndex} className="cuisine-checkbox">
+                            <input
+                              type="checkbox"
+                              checked={selectedCuisines.includes(cuisine)}
+                              onChange={() => handleCuisineToggle(cuisine)}
+                            />
+                            <span>{cuisine}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="no-results">No cuisines found matching "{cuisineSearchQuery}"</div>
+                )}
               </div>
             </div>
           )}
@@ -318,17 +593,69 @@ function App() {
                       <div className="ingredients-card">
                         <h2 className="section-title"> Detected Ingredients</h2>
                         <p className="section-subtitle">Confidence scores from object detection model</p>
+                        
+                        {/* Add Ingredient Input */}
+                        <div className="add-ingredient-section">
+                          <div className="add-ingredient-input-container">
+                            <input
+                              type="text"
+                              placeholder="Add ingredient manually..."
+                              value={newIngredient}
+                              onChange={(e) => setNewIngredient(e.target.value)}
+                              onKeyPress={handleIngredientKeyPress}
+                              className="add-ingredient-input"
+                            />
+                            <button 
+                              onClick={handleAddIngredient}
+                              className="add-ingredient-btn"
+                              disabled={!newIngredient.trim()}
+                            >
+                              + Add
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Ingredients Grid */}
                         <div className="ingredients-grid">
-                          {ingredients.map((ingredient, index) => (
-                            <div key={index} className="ingredient-tag">
-                              <span className="ingredient-name">{typeof ingredient === 'string' ? ingredient : ingredient.name}</span>
-                              {typeof ingredient === 'object' && (
-                                <span className="confidence-score">
-                                  {(ingredient.confidence * 100).toFixed(0)}%
-                                </span>
-                              )}
-                            </div>
-                          ))}
+                          {ingredients.map((ingredient, index) => {
+                            const ingName = typeof ingredient === 'string' ? ingredient : ingredient.name
+                            const isUserInputted = typeof ingredient === 'object' && ingredient.userInputted
+                            const hasConfidence = typeof ingredient === 'object' && ingredient.confidence && !isUserInputted
+                            
+                            return (
+                              <div key={index} className="ingredient-tag">
+                                <span className="ingredient-name">{ingName}</span>
+                                {isUserInputted && (
+                                  <span className="user-inputted-tag">
+                                    User Inputted
+                                  </span>
+                                )}
+                                {hasConfidence && (
+                                  <span className="confidence-score">
+                                    {(ingredient.confidence * 100).toFixed(0)}%
+                                  </span>
+                                )}
+                                <button
+                                  onClick={() => handleRemoveIngredient(index)}
+                                  className="remove-ingredient-btn"
+                                  title="Remove ingredient"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            )
+                          })}
+                        </div>
+
+                        {/* Recalibrate Button */}
+                        <div className="recalibrate-section">
+                          <button 
+                            onClick={handleRecalibrate}
+                            className="recalibrate-btn"
+                            disabled={loading || !ingredients || ingredients.length === 0}
+                          >
+                            {loading ? 'Generating...' : '🔄 Recalibrate Recipes'}
+                          </button>
                         </div>
                       </div>
                     )}
@@ -460,20 +787,37 @@ function App() {
           )}
 
           {imagePreview && !(ingredients || recipes || shoppingSuggestions) && (
-            <button
-              onClick={handleAnalyze}
-              disabled={!image || loading}
-              className="analyze-btn"
-            >
-              {loading ? (
-                <>
-                  <span className="loading-spinner"></span>
-                  Analyzing Fridge...
-                </>
-              ) : (
-                '🔍 Analyze Fridge'
+            <>
+              <button
+                onClick={handleAnalyze}
+                disabled={!image || loading}
+                className="analyze-btn"
+              >
+                {loading ? (
+                  <>
+                    <span className="loading-spinner"></span>
+                    Analyzing Fridge...
+                  </>
+                ) : (
+                  '🔍 Analyze Fridge'
+                )}
+              </button>
+              
+              {loading && (
+                <div className="progress-bar-container">
+                  <div className="progress-bar">
+                    <div 
+                      className="progress-bar-fill" 
+                      style={{ width: `${progress}%` }}
+                    ></div>
+                  </div>
+                  <p className="progress-text">
+                    {progressMessage || 'Processing image and generating recipes...'}
+                  </p>
+                  <p className="progress-percentage">{progress}%</p>
+                </div>
               )}
-            </button>
+            </>
           )}
 
           {error && <div className="error-message">{error}</div>}

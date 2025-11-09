@@ -60,15 +60,6 @@ NON_INGREDIENT_DENY_LIST = {
     "plastic", "metal", "paper", "cardboard", "foil", "wrap", "lid", "cap",
 }
 
-# Adjectives to remove (quantity/quality descriptors)
-QUANTITY_ADJECTIVES = {
-    "large", "small", "big", "tiny", "huge", "medium", "big", "little",
-    "fresh", "old", "new", "expired", "rotten", "spoiled", "good", "bad",
-    "full", "empty", "half", "whole", "partial", "leftover", "remaining",
-    "some", "many", "few", "several", "multiple", "various", "different",
-
-    "raw", "cooked", "frozen", "thawed", "warm", "cold", "hot", "cool",
-}
 
 def validate_image_quality(image_pil: Image.Image) -> Tuple[bool, Optional[str]]:
     """
@@ -549,13 +540,12 @@ def recalibrate_recipes():
         # Generate recipes using Gemini
         recipes = generate_recipes(ingredients, preferences)
         
-        # Extract missing ingredients
-        detected_ingredient_names = [ing['name'].lower() if isinstance(ing, dict) else ing.lower() for ing in ingredients_list]
-        missing_ingredients = []
+        # Extract missing ingredients (optimized: O(n) using set instead of O(n²))
+        missing_ingredients_set = set()
         for recipe in recipes:
             for missing in recipe.get('missingIngredients', []):
-                if missing not in missing_ingredients:
-                    missing_ingredients.append(missing)
+                missing_ingredients_set.add(missing)
+        missing_ingredients = list(missing_ingredients_set)
         
         # Generate shopping suggestions
         shopping_suggestions = generate_shopping_suggestions(missing_ingredients)
@@ -609,7 +599,6 @@ def analyze_fridge():
             
             # Progress: 5% - Reading image
             yield f"data: {json.dumps({'progress': 5, 'message': 'Reading image...'})}\n\n"
-            time.sleep(0.1)  # Small delay for UI update
             
             # Process image through new classification system
             image_bytes = image_file.read()
@@ -617,7 +606,6 @@ def analyze_fridge():
             
             # Progress: 10% - Validating image quality
             yield f"data: {json.dumps({'progress': 10, 'message': 'Validating image quality...'})}\n\n"
-            time.sleep(0.1)
             
             # Validate and optimize
             is_valid, error_msg = validate_image_quality(image_pil)
@@ -627,14 +615,12 @@ def analyze_fridge():
             
             # Progress: 20% - Optimizing image
             yield f"data: {json.dumps({'progress': 20, 'message': 'Optimizing image for analysis...'})}\n\n"
-            time.sleep(0.1)
             
             image_pil = optimize_image_size(image_pil, max_dimension=1024)
             image_base64 = image_to_base64(image_pil, quality=90)
             
             # Progress: 30% - Analyzing image with AI
             yield f"data: {json.dumps({'progress': 30, 'message': 'Analyzing image with AI vision model...'})}\n\n"
-            time.sleep(0.1)
             
             # Classify using Dedalus Labs API
             model = FALLBACK_MODEL if USE_FALLBACK else PRIMARY_MODEL
@@ -643,40 +629,34 @@ def analyze_fridge():
             
             # Progress: 60% - Processing ingredients
             yield f"data: {json.dumps({'progress': 60, 'message': f'Processing {len(raw_ingredients)} detected ingredients...'})}\n\n"
-            time.sleep(0.1)
             
             # Post-process
             ingredients = post_process_ingredients(raw_ingredients, min_confidence=min_conf)
             
             # Progress: 70% - Generating recipes
             yield f"data: {json.dumps({'progress': 70, 'message': 'Generating personalized recipes...'})}\n\n"
-            time.sleep(0.1)
             
             # Generate recipes using Gemini (keep existing recipe generation)
             recipes = generate_recipes(ingredients, preferences)
             
             # Progress: 85% - Processing recipes
             yield f"data: {json.dumps({'progress': 85, 'message': f'Processing {len(recipes)} recipe recommendations...'})}\n\n"
-            time.sleep(0.1)
             
-            # Extract missing ingredients
-            detected_ingredient_names = [ing['name'].lower() for ing in ingredients]
-            missing_ingredients = []
+            # Extract missing ingredients (optimized: O(n) using set instead of O(n²))
+            missing_ingredients_set = set()
             for recipe in recipes:
                 for missing in recipe.get('missingIngredients', []):
-                    if missing not in missing_ingredients:
-                        missing_ingredients.append(missing)
+                    missing_ingredients_set.add(missing)
+            missing_ingredients = list(missing_ingredients_set)
             
             # Progress: 90% - Generating shopping suggestions
             yield f"data: {json.dumps({'progress': 90, 'message': 'Generating shopping suggestions...'})}\n\n"
-            time.sleep(0.1)
             
             # Generate shopping suggestions
             shopping_suggestions = generate_shopping_suggestions(missing_ingredients)
             
             # Progress: 100% - Complete
             yield f"data: {json.dumps({'progress': 100, 'message': 'Analysis complete!'})}\n\n"
-            time.sleep(0.1)
             
             # Send final results
             result_data = {
@@ -740,7 +720,6 @@ def generate_recipes(ingredients, preferences):
         
         # Use Gemini for recipe generation (optional - can be replaced with OpenAI)
         try:
-            import google.generativeai as genai
             import requests
             
             GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")

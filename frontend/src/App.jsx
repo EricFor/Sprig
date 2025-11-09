@@ -20,6 +20,8 @@ function App() {
   const [newIngredient, setNewIngredient] = useState('')
   const [progress, setProgress] = useState(0)
   const [progressMessage, setProgressMessage] = useState('')
+  const [storesVisible, setStoresVisible] = useState({}) // Track visible stores per ingredient
+  const [expandedStores, setExpandedStores] = useState({}) // Track which store details are expanded
   
   // User diet preferences
   const [preferences, setPreferences] = useState({
@@ -310,6 +312,22 @@ function App() {
                 setShoppingSuggestions(data.shoppingSuggestions || [])
                 setProgress(100)
                 setProgressMessage('Analysis complete!')
+                
+                // Debug: Log shopping suggestions data
+                if (data.shoppingSuggestions) {
+                  console.log('Shopping suggestions received:', JSON.stringify(data.shoppingSuggestions, null, 2))
+                  data.shoppingSuggestions.forEach((suggestion, idx) => {
+                    console.log(`Suggestion ${idx} for ${suggestion.ingredient}:`, suggestion.stores?.length || 0, 'stores')
+                    suggestion.stores?.forEach((store, storeIdx) => {
+                      console.log(`  Store ${storeIdx}:`, {
+                        name: store.name,
+                        price: store.price,
+                        environmentalImpact: store.environmentalImpact ? store.environmentalImpact.substring(0, 50) + '...' : 'none',
+                        reasoning: store.reasoning ? store.reasoning.substring(0, 50) + '...' : 'none'
+                      })
+                    })
+                  })
+                }
               }
             } catch (parseError) {
               console.error('Error parsing SSE data:', parseError, line)
@@ -343,6 +361,8 @@ function App() {
     setDietSearchQuery('')
     setCuisineSearchQuery('')
     setNewIngredient('')
+    setStoresVisible({}) // Reset visible stores
+    setExpandedStores({}) // Reset expanded store details
   }
 
   const handleAddIngredient = () => {
@@ -418,6 +438,11 @@ function App() {
       setRecipes(data.recipes || [])
       setMissingIngredients(data.missingIngredients || [])
       setShoppingSuggestions(data.shoppingSuggestions || [])
+      
+      // Debug: Log shopping suggestions data
+      if (data.shoppingSuggestions) {
+        console.log('Shopping suggestions received (recalibrate):', JSON.stringify(data.shoppingSuggestions, null, 2))
+      }
       
       // Switch to recipes tab
       if (data.recipes && data.recipes.length > 0) {
@@ -717,41 +742,95 @@ function App() {
                         <h2 className="section-title"> Eco-Friendly Shopping Suggestions</h2>
                         <p className="section-subtitle">Stores ranked by sustainability score, carbon footprint, and local sourcing</p>
                         <div className="shopping-suggestions">
-                          {shoppingSuggestions.map((suggestion, index) => (
-                            <div key={index} className="ingredient-shopping">
-                              <h3 className="shopping-ingredient-name">{suggestion.ingredient}</h3>
-                              <div className="stores-list">
-                                {suggestion.stores.map((store, storeIndex) => (
-                                  <div key={storeIndex} className="store-item">
-                                    <div className="store-header">
-                                      <div className="store-info">
-                                        <h4 className="store-name">{store.name}</h4>
-                                        <span className="store-distance">{store.distance}</span>
+                          {shoppingSuggestions.map((suggestion, index) => {
+                            const ingredientKey = suggestion.ingredient
+                            const totalStores = suggestion.stores.length
+                            const initialVisible = 3 // Show first 3 stores by default
+                            const visibleCount = storesVisible[ingredientKey] || initialVisible
+                            const visibleStores = suggestion.stores.slice(0, visibleCount)
+                            const hasMore = totalStores > visibleCount
+                            
+                            return (
+                              <div key={index} className="ingredient-shopping">
+                                <h3 className="shopping-ingredient-name">{suggestion.ingredient}</h3>
+                                <div className="stores-list">
+                                  {visibleStores.map((store, storeIndex) => (
+                                    <div key={storeIndex} className="store-item">
+                                      <div className="store-header">
+                                        <div className="store-info">
+                                          <h4 className="store-name">{store.name}</h4>
+                                          <span className="store-distance">{store.distance}</span>
+                                        </div>
+                                        <div 
+                                          className="eco-score-badge"
+                                          style={{ backgroundColor: getEcoScoreColor(store.ecoScore) }}
+                                        >
+                                          <span className="eco-score-value">{store.ecoScore}</span>
+                                          <span className="eco-score-label">Eco Score</span>
+                                        </div>
                                       </div>
-                                      <div 
-                                        className="eco-score-badge"
-                                        style={{ backgroundColor: getEcoScoreColor(store.ecoScore) }}
-                                      >
-                                        <span className="eco-score-value">{store.ecoScore}</span>
-                                        <span className="eco-score-label">Eco Score</span>
+                                      <div className="store-details">
+                                        <div className="sustainability-badge">
+                                          <span className="sustainability-label">Sustainability:</span>
+                                          <span className="sustainability-value">{store.sustainability}</span>
+                                        </div>
+                                        <p className="store-rating">{store.rating}</p>
+                                        <div className="store-footer">
+                                          <span className="store-price">{store.price || "$?.??"}</span>
+                                          <button 
+                                            className="store-action-btn"
+                                            onClick={() => {
+                                              const storeKey = `${ingredientKey}-${storeIndex}`
+                                              setExpandedStores(prev => ({
+                                                ...prev,
+                                                [storeKey]: !prev[storeKey]
+                                              }))
+                                            }}
+                                          >
+                                            {expandedStores[`${ingredientKey}-${storeIndex}`] ? 'Show Less' : 'Show More'}
+                                          </button>
+                                        </div>
+                                        {expandedStores[`${ingredientKey}-${storeIndex}`] && (
+                                          <div className="store-expanded-details">
+                                            <div className="environmental-impact-section">
+                                              <h5 className="detail-section-title">Environmental Impact</h5>
+                                              <p className="detail-section-content">{store.environmentalImpact || "Limited information available about this brand's environmental practices."}</p>
+                                            </div>
+                                            <div className="reasoning-section">
+                                              <h5 className="detail-section-title">Eco Score Reasoning</h5>
+                                              <p className="detail-section-content">{store.reasoning || "Default score assigned due to lack of available environmental data."}</p>
+                                            </div>
+                                          </div>
+                                        )}
                                       </div>
                                     </div>
-                                    <div className="store-details">
-                                      <div className="sustainability-badge">
-                                        <span className="sustainability-label">Sustainability:</span>
-                                        <span className="sustainability-value">{store.sustainability}</span>
-                                      </div>
-                                      <p className="store-rating">{store.rating}</p>
-                                      <div className="store-footer">
-                                        <span className="store-price">{store.price}</span>
-                                        <button className="store-action-btn">View Details</button>
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
+                                  ))}
+                                </div>
+                                {hasMore && (
+                                  <button
+                                    onClick={() => setStoresVisible({
+                                      ...storesVisible,
+                                      [ingredientKey]: totalStores
+                                    })}
+                                    className="show-more-btn"
+                                  >
+                                    Show More ({totalStores - visibleCount} more)
+                                  </button>
+                                )}
+                                {visibleCount > initialVisible && (
+                                  <button
+                                    onClick={() => setStoresVisible({
+                                      ...storesVisible,
+                                      [ingredientKey]: initialVisible
+                                    })}
+                                    className="show-less-btn"
+                                  >
+                                    Show Less
+                                  </button>
+                                )}
                               </div>
-                            </div>
-                          ))}
+                            )
+                          })}
                         </div>
                       </div>
                     )}

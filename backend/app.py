@@ -13,7 +13,6 @@ import numpy as np
 from openai import OpenAI
 import re
 from pathlib import Path
-from inflect import engine
 from dotenv import load_dotenv, find_dotenv
 
 # Load environment variables from .env file
@@ -50,56 +49,7 @@ USE_FALLBACK = os.getenv("USE_FALLBACK_MODEL", "false").lower() == "true"
 DEFAULT_MIN_CONFIDENCE = 0.50
 DEFAULT_TOP_K = None  # No limit by default
 
-# Initialize inflect engine for singularization
-inflect_engine = engine()
-
-# Alias mapping for ingredient normalization
-INGREDIENT_ALIASES = {
-    "scallion": "green onion",
-    "green onion": "green onion",
-    "spring onion": "green onion",
-    "scallions": "green onion",
-    "green onions": "green onion",
-    "bell pepper": "bell pepper",
-    "bell peppers": "bell pepper",
-    "sweet pepper": "bell pepper",
-    "red pepper": "bell pepper",
-    "yellow pepper": "bell pepper",
-    "tomato": "tomato",
-    "tomatoes": "tomato",
-    "cherry tomato": "tomato",
-    "cherry tomatoes": "tomato",
-    "carrot": "carrot",
-    "carrots": "carrot",
-    "lettuce": "lettuce",
-    "leaf lettuce": "lettuce",
-    "iceberg lettuce": "lettuce",
-    "onion": "onion",
-    "onions": "onion",
-    "yellow onion": "onion",
-    "white onion": "onion",
-    "red onion": "onion",
-    "egg": "egg",
-    "eggs": "egg",
-    "chicken": "chicken",
-    "chicken breast": "chicken",
-    "chicken thigh": "chicken",
-    "beef": "beef",
-    "ground beef": "beef",
-    "milk": "milk",
-    "whole milk": "milk",
-    "skim milk": "milk",
-    "cheese": "cheese",
-    "cheddar cheese": "cheese",
-    "mozzarella": "cheese",
-    "mozzarella cheese": "cheese",
-    "butter": "butter",
-    "yogurt": "yogurt",
-    "greek yogurt": "yogurt",
-    "bread": "bread",
-    "white bread": "bread",
-    "whole wheat bread": "bread",
-}
+# Ingredient aliases removed to preserve ingredient differentiation
 
 # Deny list for non-ingredient items
 NON_INGREDIENT_DENY_LIST = {
@@ -116,7 +66,7 @@ QUANTITY_ADJECTIVES = {
     "fresh", "old", "new", "expired", "rotten", "spoiled", "good", "bad",
     "full", "empty", "half", "whole", "partial", "leftover", "remaining",
     "some", "many", "few", "several", "multiple", "various", "different",
-    "red", "green", "yellow", "orange", "blue", "purple", "white", "black",
+
     "raw", "cooked", "frozen", "thawed", "warm", "cold", "hot", "cool",
 }
 
@@ -287,45 +237,16 @@ Include only ingredients you can identify with high confidence (≥0.50)."""
 
 def normalize_ingredient_name(name: str) -> str:
     """
-    Normalize ingredient name: lowercase, remove adjectives, singularize.
+    Normalize ingredient name: minimal processing to preserve differentiation.
+    Only does basic cleaning: lowercase and strip whitespace.
+    No aliasing, singularization, or adjective removal to preserve ingredient variants.
     """
-    # Convert to lowercase
+    # Only do minimal normalization: lowercase and strip
+    # This preserves ingredient differentiation (e.g., "cherry tomato" vs "tomato")
     normalized = name.lower().strip()
-    
-    # Remove common prefixes/suffixes and adjectives
-    words = normalized.split()
-    filtered_words = []
-    
-    for word in words:
-        # Skip quantity/quality adjectives
-        if word not in QUANTITY_ADJECTIVES:
-            filtered_words.append(word)
-    
-    normalized = " ".join(filtered_words)
     
     # Remove special characters except spaces and hyphens
     normalized = re.sub(r'[^\w\s-]', '', normalized)
-    
-    # Singularize (convert plural to singular)
-    try:
-        # Use inflect to singularize
-        words = normalized.split()
-        singularized_words = []
-        for word in words:
-            # Try to singularize each word
-            singular = inflect_engine.singular_noun(word)
-            if singular:
-                singularized_words.append(singular)
-            else:
-                singularized_words.append(word)
-        normalized = " ".join(singularized_words)
-    except Exception:
-        # If singularization fails, keep original
-        pass
-    
-    # Apply alias mapping
-    if normalized in INGREDIENT_ALIASES:
-        normalized = INGREDIENT_ALIASES[normalized]
     
     return normalized.strip()
 
@@ -350,7 +271,7 @@ def filter_non_ingredients(ingredient_name: str) -> bool:
 
 def post_process_ingredients(raw_ingredients: List[Dict[str, Any]], min_confidence: float = DEFAULT_MIN_CONFIDENCE, top_k: Optional[int] = None) -> List[Dict[str, Any]]:
     """
-    Post-process ingredients: normalize, filter, deduplicate, apply confidence threshold.
+    Post-process ingredients: filter, deduplicate, apply confidence threshold.
     """
     processed = []
     seen_normalized = {}  # Map normalized name to best ingredient
@@ -374,17 +295,17 @@ def post_process_ingredients(raw_ingredients: List[Dict[str, Any]], min_confiden
         if not filter_non_ingredients(normalized_name):
             continue
         
-        # Deduplicate: keep highest confidence
+        # Deduplicate: keep highest confidence, but preserve original name
         if normalized_name not in seen_normalized:
             seen_normalized[normalized_name] = {
-                "name": normalized_name,
+                "name": name,  # Keep original name for differentiation
                 "confidence": confidence
             }
         else:
             # Update if this has higher confidence
             if confidence > seen_normalized[normalized_name]["confidence"]:
                 seen_normalized[normalized_name] = {
-                    "name": normalized_name,
+                    "name": name,  # Keep original name for differentiation
                     "confidence": confidence
                 }
     
@@ -420,17 +341,17 @@ def merge_ingredient_lists(ingredient_lists: List[List[Dict[str, Any]]], min_con
             if not filter_non_ingredients(normalized_name):
                 continue
             
-            # Deduplicate: keep highest confidence
+            # Deduplicate: keep highest confidence, but preserve original name
             if normalized_name not in merged:
                 merged[normalized_name] = {
-                    "name": normalized_name,
+                    "name": name,  # Keep original name for differentiation
                     "confidence": confidence
                 }
             else:
                 # Update if this has higher confidence
                 if confidence > merged[normalized_name]["confidence"]:
                     merged[normalized_name] = {
-                        "name": normalized_name,
+                        "name": name,  # Keep original name for differentiation
                         "confidence": confidence
                     }
     
